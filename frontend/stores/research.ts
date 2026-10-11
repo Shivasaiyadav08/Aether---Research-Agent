@@ -1,0 +1,114 @@
+import { create } from "zustand";
+import type {
+  Conversation,
+  Health,
+  Model,
+  Message,
+  Source,
+  View,
+  WorkflowEvent,
+  Workspace,
+} from "@/types";
+
+type ResearchState = {
+  view: View;
+  sidebarCollapsed: boolean;
+  intelligenceOpen: boolean;
+  workspaces: Workspace[];
+  workspaceId: string;
+  conversations: Conversation[];
+  conversationId: string | null;
+  messages: Message[];
+  events: WorkflowEvent[];
+  streaming: boolean;
+  uploading: boolean;
+  draft: string;
+  health: Health | null;
+  sessionId: string;
+  models: Model[];
+  selectedModel: string;
+  relevanceThreshold: number;
+  modelNotice: string;
+  error: string;
+  warnings: string[];
+  selectedSource: Source | null;
+  elapsedMs: number;
+  update: (
+    patch: Partial<Omit<ResearchState, "update" | "receiveEvent" | "newChat">>,
+  ) => void;
+  newChat: () => void;
+  receiveEvent: (event: WorkflowEvent) => void;
+};
+
+export const useResearch = create<ResearchState>((set) => ({
+  view: "research",
+  sidebarCollapsed: false,
+  intelligenceOpen: true,
+  workspaces: [],
+  workspaceId: "",
+  conversations: [],
+  conversationId: null,
+  messages: [],
+  events: [],
+  streaming: false,
+  uploading: false,
+  draft: "",
+  health: null,
+  sessionId: "",
+  models: [],
+  selectedModel: "",
+  relevanceThreshold: 0.5,
+  modelNotice: "",
+  error: "",
+  warnings: [],
+  selectedSource: null,
+  elapsedMs: 0,
+  update: (patch) => set(patch),
+  newChat: () =>
+    set({
+      view: "research",
+      conversationId: null,
+      messages: [],
+      events: [],
+      draft: "",
+      error: "",
+      warnings: [],
+      elapsedMs: 0,
+    }),
+  receiveEvent: (event) =>
+    set((state) => {
+      const patch: Partial<ResearchState> = {
+        elapsedMs: event.elapsed_ms ?? state.elapsedMs,
+      };
+      if (event.type === "model_fallback")
+        patch.modelNotice = String(event.message);
+      if (event.type === "model_fallback" && event.failed_model)
+        patch.models = state.models.map((model) =>
+          model.id === event.failed_model
+            ? { ...model, available: false }
+            : model,
+        );
+      if (
+        (event.type === "model_selected" || event.type === "model_fallback") &&
+        event.model
+      )
+        patch.selectedModel = event.model;
+      if (event.type !== "token") patch.events = [...state.events, event];
+      if (event.type === "start") patch.conversationId = event.conversation_id!;
+      if (event.type === "answer_reset") patch.draft = "";
+      if (event.type === "token") patch.draft = state.draft + event.text;
+      if (event.type === "final") {
+        patch.draft = "";
+        patch.warnings = event.warnings ?? [];
+        if (event.message && typeof event.message !== "string")
+          patch.messages = [...state.messages, event.message];
+      }
+      if (event.type === "error") {
+        patch.error = String(event.message);
+        patch.draft = "";
+      }
+      if (event.type === "done")
+        patch.elapsedMs = event.duration_ms ?? state.elapsedMs;
+      return patch;
+    }),
+}));

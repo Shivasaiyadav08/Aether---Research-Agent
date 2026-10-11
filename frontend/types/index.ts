@@ -1,0 +1,98 @@
+export type View = "research" | "documents";
+export type Workspace = {
+  id: string;
+  name: string;
+  created_at: string;
+  document_count?: number;
+  chunk_count?: number;
+  conversation_count?: number;
+};
+export type Conversation = {
+  id: string;
+  workspace_id: string;
+  title: string;
+  created_at: string;
+};
+export type Source = {
+  id: string;
+  kind: "document" | "web";
+  name: string;
+  text: string;
+  document_id?: string;
+  page?: number;
+  url?: string;
+  similarity?: number;
+  relevance?: number;
+  reason?: string;
+  accepted?: boolean;
+};
+export type Message = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources: Source[];
+  run_id?: string;
+  created_at?: string;
+};
+export type DocumentRecord = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  size: number;
+  status: string;
+  chunk_count: number;
+  error?: string;
+  created_at: string;
+  text?: string;
+  preview_truncated?: boolean;
+};
+export type Model = {
+  id: string;
+  name: string;
+  context_length: number;
+  pricing: { prompt?: string; completion?: string };
+  supported_parameters: string[];
+  free_tier_eligible?: boolean;
+  available?: boolean;
+  retry_after_seconds?: number;
+};
+export type Health = {
+  status: string;
+  gemini_configured: boolean;
+  tavily_configured: boolean;
+  embedding_model: string;
+  embeddings_loaded: boolean;
+  max_upload_mb: number;
+};
+export type WorkflowEvent = {
+  type: string;
+  node?: string;
+  duration_ms?: number;
+  elapsed_ms?: number;
+  details?: Record<string, unknown>;
+  sources?: Source[];
+  source?: Source;
+  query?: string;
+  route?: string;
+  reason?: string;
+  missing_information?: string;
+  text?: string;
+  answer?: string;
+  warnings?: string[];
+  valid?: boolean;
+  message?: Message | string;
+  conversation_id?: string;
+  run_id?: string;
+  status?: string;
+  model?: string | null;
+  failed_model?: string;
+};
+export type WorkflowRun = {
+  id: string;
+  conversation_id: string;
+  status: string;
+  events: WorkflowEvent[];
+  duration_ms: number;
+  error?: string;
+  created_at: string;
+};

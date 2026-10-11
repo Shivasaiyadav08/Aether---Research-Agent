@@ -1,0 +1,173 @@
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/geist-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+/* Shared monochrome design tokens. Light mode preserves the existing preference. */
+:root,
+.dark {
+  color-scheme: dark;
+  --bg: #090909;
+  --sidebar: #111111;
+  --panel: #111111;
+  --surface: #171717;
+  --text: #f5f5f5;
+  --soft: #d4d4d4;
+  --muted: #a3a3a3;
+  --subtle: #737373;
+  --border: #262626;
+  --accent: #f5f5f5;
+  --accent-bright: #d4d4d4;
+  --accent-wash: #1c1c1c;
+  --teal: #d4d4d4;
+  --teal-wash: #171717;
+  --danger: #f5f5f5;
+  --danger-wash: #171717;
+  --edge: #525252;
+  --grid: #262626;
+  --shadow: none;
+  --font-sans: "Geist", "Inter", "Segoe UI", Arial, sans-serif;
+  --background: #090909;
+  --foreground: #f5f5f5;
+  --primary: #f5f5f5;
+  --primary-foreground: #090909;
+  --card: #111111;
+  --card-foreground: #f5f5f5;
+  --popover: #171717;
+  --popover-foreground: #f5f5f5;
+  --muted-foreground: #a3a3a3;
+  --input: #262626;
+  --ring: #a3a3a3;
+  --radius: 8px;
+}
+:root.light {
+  color-scheme: light;
+  --bg: #fafafa;
+  --sidebar: #f5f5f5;
+  --panel: #ffffff;
+  --surface: #eeeeee;
+  --text: #090909;
+  --soft: #404040;
+  --muted: #626262;
+  --subtle: #737373;
+  --border: #dedede;
+  --accent: #111111;
+  --accent-bright: #404040;
+  --accent-wash: #eeeeee;
+  --teal: #404040;
+  --teal-wash: #eeeeee;
+  --danger: #111111;
+  --danger-wash: #eeeeee;
+  --edge: #a3a3a3;
+  --grid: #dedede;
+  --background: #fafafa;
+  --foreground: #090909;
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+  --card: #ffffff;
+  --card-foreground: #090909;
+  --popover: #ffffff;
+  --popover-foreground: #090909;
+  --muted-foreground: #626262;
+  --input: #dedede;
+  --ring: #626262;
+}
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 24px;
+}
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+strong {
+  font-weight: 550;
+}
+button,
+a {
+  transition:
+    background-color 180ms,
+    color 180ms,
+    border-color 180ms;
+}
+summary:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 4px;
+}
+.button {
+  min-height: 40px;
+  padding: 10px 16px;
+  border-radius: 6px;
+}
+.button-primary,
+:root:not(.dark) .button-primary {
+  color: var(--bg);
+  box-shadow: none;
+}
+.button-icon {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+}
+.button-sm {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+.button-danger {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+.button:active:not(:disabled) {
+  transform: none;
+}
+.eyebrow {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.status-dot.live {
+  background: var(--soft);
+  box-shadow: none;
+}
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.wordmark strong {
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: -1.1px;
+}
+.wordmark > span {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: 12px;
+  padding-left: 16px;
+  border-left: 1px solid var(--border);
+}
+.aether-mark {
+  color: inherit;
+}
+.skip-link {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 100;
+  padding: 12px 18px;
+  background: var(--text);
+  color: var(--bg);
+  transform: translateY(-200%);
+  border-radius: 6px;
+}
+.skip-link:focus {
+  transform: none;
+}
