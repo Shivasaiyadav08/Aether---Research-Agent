@@ -17,16 +17,16 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 class Config(BaseSettings):
-     """
-    Central configuration manager for the backend.
+    
+    # Central configuration manager for the backend.
 
-    WHY THIS CLASS EXISTS:
-    Instead of hardcoding API keys, model names, URLs, and limits throughout
-    the application, we define them in one place.
+    # WHY THIS CLASS EXISTS:
+    # Instead of hardcoding API keys, model names, URLs, and limits throughout
+    # the application, we define them in one place.
 
-    BaseSettings loads values from environment variables and configured .env files.
-    Keeping secrets in backend configuration helps prevent exposing them to browsers.
-    """
+    # BaseSettings loads values from environment variables and configured .env files.
+    # Keeping secrets in backend configuration helps prevent exposing them to browsers.
+    
     
     # CONFIGURATION LOADING RULES
     model_config = SettingsConfigDict(
