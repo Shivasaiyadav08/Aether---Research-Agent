@@ -293,3 +293,50 @@ def test_cooldowns_expire_and_do_not_follow_a_replacement_key(monkeypatch):
     assert free_models.model_availability("gemini-only")["available"]
     free_models.mark_model_unavailable("gemini-only", -1)
     assert free_models.model_availability("gemini-only")["available"]
+
+
+async def test_slow_model_switches_to_an_alternative_without_repeating_the_timeout():
+    calls = []
+
+    async def operation(model):
+        calls.append(model)
+        if model == "gemini-slow":
+            raise TimeoutError("private")
+        return "answer"
+
+    plan = {"models": ["gemini-slow", "gemini-fast"], "unavailable": []}
+    assert await call_with_free_fallback(plan, operation, lambda *_: None) == "answer"
+    assert calls == ["gemini-slow", "gemini-fast"]
+
+
+async def test_attempt_budget_prevents_cycling_through_the_entire_catalog(monkeypatch):
+    monkeypatch.setattr(config, "gemini_max_model_attempts", 3)
+    calls, notices = [], []
+
+    async def operation(model):
+        calls.append(model)
+        raise wrapped_error(503)
+
+    plan = {"models": [f"gemini-{i}" for i in range(8)], "unavailable": []}
+    with pytest.raises(RuntimeError, match="model-attempt or time limit"):
+        await call_with_free_fallback(plan, operation, lambda *notice: notices.append(notice))
+    assert calls == ["gemini-0", "gemini-0", "gemini-1"]
+    assert notices[-1][1] is None
+
+
+async def test_operation_deadline_cancels_a_stalled_call_and_retains_timeout(monkeypatch):
+    monkeypatch.setattr(config, "gemini_operation_timeout_seconds", 0.02)
+    calls, cancelled = [], asyncio.Event()
+
+    async def stalled(model):
+        calls.append(model)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    plan = {"models": ["gemini-stalled", "gemini-next"], "unavailable": []}
+    with pytest.raises(RuntimeError, match="timed out"):
+        await call_with_free_fallback(plan, stalled, lambda *_: None)
+    assert calls == ["gemini-stalled"]
+    assert cancelled.is_set()

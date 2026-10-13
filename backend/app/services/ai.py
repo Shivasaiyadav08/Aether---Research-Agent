@@ -28,6 +28,7 @@
 import asyncio
 import json
 import logging
+from time import monotonic
 
 # urlparse breaks a website URL into different parts.
 # Example:
@@ -367,6 +368,9 @@ async def call_with_free_fallback(plan: dict, operation, notify):
     if active in models:
         models = [active] + [model for model in models if model != active]
     last_error = None
+    attempts = 0
+    budget_expired = False
+    deadline = monotonic() + config.gemini_operation_timeout_seconds
     failures = plan.setdefault("failure_reasons", {})
     # Transient failures are local to this call, not shared by concurrent graders
     # or every later workflow node. Persistent failures expire with their cooldown.
@@ -376,11 +380,19 @@ async def call_with_free_fallback(plan: dict, operation, notify):
             failures.pop(model, None)
 
     for index, model in enumerate(models):
+        if budget_expired or attempts >= config.gemini_max_model_attempts or monotonic() >= deadline:
+            break
         if model in plan["unavailable"]:
             continue
         for attempt in range(2):
+            remaining = deadline - monotonic()
+            if attempts >= config.gemini_max_model_attempts or remaining <= 0:
+                break
+            attempts += 1
+            timeout_scope = asyncio.timeout(remaining)
             try:
-                result = await operation(model)
+                async with timeout_scope:
+                    result = await operation(model)
                 mark_model_available(model)
                 if model in plan["unavailable"]:
                     plan["unavailable"].remove(model)
@@ -388,12 +400,24 @@ async def call_with_free_fallback(plan: dict, operation, notify):
                 plan["active"] = model
                 return result
             except Exception as error:
+                budget_expired = timeout_scope.expired()
                 if not is_model_unavailable(error):
                     raise
                 last_error = error
                 status = service_status(error)
                 reason = safe_service_error(error)
-                if attempt == 0 and retryable_model_error(error):
+                alternatives = [item for item in models[index + 1 :] if item not in plan["unavailable"]]
+                timed_out = status in {408, 504} or any(
+                    isinstance(e, (httpx.TimeoutException, TimeoutError)) for e in error_chain(error)
+                )
+                if (
+                    attempt == 0
+                    and retryable_model_error(error)
+                    and attempts < config.gemini_max_model_attempts
+                    and not budget_expired
+                    and deadline - monotonic() > 0.5
+                    and not (timed_out and alternatives)
+                ):
                     logger.warning(
                         "Gemini request retry model=%s status=%s error_type=%s reason=%s",
                         model,
@@ -411,6 +435,8 @@ async def call_with_free_fallback(plan: dict, operation, notify):
                     failures[model] = reason
                     mark_model_unavailable(model, 60 if status == 429 else 300)
                 alternatives = [item for item in models[index + 1 :] if item not in plan["unavailable"]]
+                if budget_expired or attempts >= config.gemini_max_model_attempts or monotonic() >= deadline:
+                    alternatives = []
                 logger.warning(
                     "Gemini request failed model=%s status=%s error_type=%s reason=%s",
                     model,
@@ -428,7 +454,14 @@ async def call_with_free_fallback(plan: dict, operation, notify):
             iter(failures.values()), "All candidates are still in cooldown. Wait and refresh the model list."
         )
     )
-    raise ModelFallbackExhausted("No eligible Gemini model completed this request. " + reason) from last_error
+    limit_note = (
+        " The request's model-attempt or time limit was reached. Please retry shortly."
+        if budget_expired or attempts >= config.gemini_max_model_attempts or monotonic() >= deadline
+        else ""
+    )
+    raise ModelFallbackExhausted(
+        "No eligible Gemini model completed this request. " + reason + limit_note
+    ) from last_error
 
 
 # ============================================================
@@ -465,6 +498,7 @@ async def structured_call(model: str, schema, instruction: str, data: dict):
 
     # Create the Gemini client.
     llm = create_llm(model)
+    llm.max_output_tokens = config.gemini_structured_max_output_tokens
 
     # Prepare messages sent to Gemini.
     messages = [

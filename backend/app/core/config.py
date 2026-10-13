@@ -56,6 +56,9 @@ class Config(BaseSettings):
     clerk_jwt_key: str = ""
     clerk_authorized_parties: str = "http://localhost:3000,http://127.0.0.1:3000"
     gemini_model: str = "auto"
+    gemini_max_model_attempts: int = Field(default=3, ge=1, le=8)
+    gemini_operation_timeout_seconds: float = Field(default=75, ge=1, le=180)
+    gemini_structured_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
     data_dir: Path = Path(__file__).resolve().parents[2] / "data"
     frontend_origin: str = "http://localhost:3000"
     max_upload_mb: int = Field(default=10, ge=1, le=100)

@@ -196,3 +196,20 @@ operational work before broad public exposure. See README.md for boundaries.
   No research documents or conversation contents were used in live checks.
 - The signed-in production session and production credentials were not inspected.
   These changes remain local and require backend/frontend deployment to apply live.
+
+## Production timeout follow-up — 13–14 October 2026
+
+- Full backend suite: 120 passed; Ruff and Git whitespace checks passed.
+- Batched grading supersedes the earlier six-request concurrent implementation.
+  Regression tests confirm one model call grades all six chunks, preserves the
+  per-chunk threshold, matches judgments by ID, and rejects missing/duplicate or
+  unknown IDs. Citation and grounding validation remain enabled.
+- Regression tests cover the three-attempt budget, cancellation at the operation
+  deadline, direct model switching after timeouts, and stopping on provider errors
+  during grading/assessment/validation without web search or regeneration.
+- A live local check sent three synthetic snippets through the actual batched
+  grading node and Gemini 3.8 Flash. It returned three judgments, accepted the two
+  astronomy snippets, rejected an unrelated accounting snippet, and had no warnings.
+  No user documents were used. No production latency improvement is claimed yet.
+- This follow-up changes the backend only. The Render backend needs deployment;
+  no new production deployment was performed in this chat.

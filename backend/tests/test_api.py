@@ -3,6 +3,7 @@ import httpx
 import pytest
 
 from app.core.config import config
+from app.agents.state import AnswerValidation, EvidenceAssessment, RelevanceBatch
 from app.models.database import AppSettings
 from test_graph import mock_ai
 
@@ -41,7 +42,9 @@ def test_invalid_relevance_threshold_is_rejected(client, workspace, threshold):
     assert client.get(f"/api/workspaces/{workspace}/conversations").json() == []
 
 
-@pytest.mark.parametrize("threshold,accepted", [(None, False), (0, True), (0.6, True), (0.61, False), (1, False)])
+@pytest.mark.parametrize(
+    "threshold,accepted", [(None, False), (0, True), (0.6, True), (0.61, False), (1, False)]
+)
 def test_chat_relevance_threshold_is_request_scoped(client, workspace, monkeypatch, threshold, accepted):
     monkeypatch.setattr(config, "gemini_api_key", "test-only")
     mock_ai(monkeypatch, score=0.6)
@@ -108,6 +111,37 @@ def test_catalog_errors_keep_status_without_exposing_credentials(client, workspa
         assert response.status_code == 503
         assert f"HTTP {status}" in response.json()["detail"]
         assert "private-api-key" not in response.text
+
+
+@pytest.mark.parametrize("failure_schema", [RelevanceBatch, EvidenceAssessment, AnswerValidation])
+@pytest.mark.parametrize("status", [401, 503])
+def test_ai_service_failure_stops_without_web_search_or_answer_regeneration(
+    client, workspace, monkeypatch, failure_schema, status
+):
+    import app.agents.nodes as nodes
+    from google.genai.errors import ClientError
+
+    monkeypatch.setattr(config, "gemini_api_key", "test-only")
+    mock_ai(monkeypatch)
+    upload(client, workspace)
+    original = nodes.structured_call
+
+    async def failing(model, schema, instruction, data):
+        if schema is failure_schema:
+            raise ClientError(status, {"error": {"code": status, "message": "private-provider-body"}})
+        return await original(model, schema, instruction, data)
+
+    monkeypatch.setattr(nodes, "structured_call", failing)
+    response = client.post("/api/chat/stream", json={"workspace_id": workspace, "question": "Stars?"})
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    error = next(event for event in events if event["type"] == "error")
+    assert f"HTTP {status}" in error["message"]
+    assert "private-provider-body" not in response.text
+    started_nodes = [event["node"] for event in events if event["type"] == "node_start"]
+    assert "web_search" not in started_nodes
+    assert "rewrite" not in started_nodes
+    assert started_nodes.count("generate") <= 1
+    assert not any(event["type"] == "final" for event in events)
 
 
 def test_upload_duplicate_preview_reindex_delete(client, workspace):

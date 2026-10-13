@@ -23,7 +23,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    START --> retrieve --> grade[Grade chunks: concurrency limit 3] --> assess
+    START --> retrieve --> grade[Grade all chunks in one request] --> assess
     assess -->|sufficient| generate
     assess -->|insufficient| rewrite --> web_search --> generate
     generate --> validate
@@ -41,7 +41,14 @@ key's accessible text-generating Gemini models. A chat gets the chosen model and
 all other verified candidates, with one extra attempt per operation for transient
 transport/server failures. Node calls use
 `call_with_free_fallback`; actual switches emit `model_fallback`. The request's
-plan is shared among its grading tasks, never across users or conversations.
+plan is reused by later workflow nodes, never across users or conversations.
+Grading uses one batch with exact, unique chunk-ID coverage; scores are matched by
+ID rather than response order. Missing/duplicate/unknown IDs fail closed.
+Each operation is limited to three model attempts and 75 seconds by default;
+timeouts switch models directly when alternatives remain. Small structured
+judgments have a 2,048-token cap, separate from the answer's 8,192-token cap.
+Provider failures in grading, assessment, or validation propagate to the SSE
+error handler instead of being interpreted as irrelevant/insufficient evidence.
 
 The composer exposes a 0–100% minimum document relevance control beside model
 selection, initially 50%. Zustand retains the choice across chats within the
@@ -74,7 +81,7 @@ interruptions; this does not add a durable background job or resume protocol.
 | backend/app/models/database.py | Tables, nullable ownership migration, SQLite setup |
 | backend/app/api/routes.py | Protected CRUD, free catalog, model selection, actual SSE |
 | backend/app/agents/state.py | Typed state and structured Pydantic judgments |
-| backend/app/agents/nodes.py | Concurrent grading, retrieval, sufficiency, generation, validation |
+| backend/app/agents/nodes.py | Batched grading, retrieval, sufficiency, generation, validation |
 | backend/app/agents/graph.py | One conditional StateGraph |
 | backend/app/services/free_models.py | Verified free catalog and compatibility ordering |
 | backend/app/services/ai.py | Gemini, bounded free fallback, Tavily |

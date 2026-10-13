@@ -10,6 +10,16 @@ class RelevanceGrade(BaseModel):
     reason: str = Field(description="Brief explanation of relevance, based only on the chunk")
 
 
+class ChunkRelevanceGrade(RelevanceGrade):
+    id: str = Field(description="Exact supplied document chunk ID, such as D1")
+
+
+class RelevanceBatch(BaseModel):
+    grades: list[ChunkRelevanceGrade] = Field(
+        min_length=1, description="Exactly one relevance judgment for each supplied chunk"
+    )
+
+
 class EvidenceAssessment(BaseModel):
     sufficient: bool = Field(
         description="True only if the evidence supports every important part of the question"

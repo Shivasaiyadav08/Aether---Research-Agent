@@ -1,12 +1,11 @@
 import json
-import asyncio
 import pytest
 
 from langchain_core.messages import AIMessageChunk
 
 from app.agents.graph import build_graph, evidence_route, validation_route
 from app.agents.nodes import citation_errors
-from app.agents.state import AnswerValidation, EvidenceAssessment, RelevanceGrade, RewrittenQuery
+from app.agents.state import AnswerValidation, EvidenceAssessment, RelevanceBatch, RewrittenQuery
 
 SETTINGS = {
     "model": "test/model",
@@ -19,8 +18,13 @@ SETTINGS = {
 
 def mock_ai(monkeypatch, *, score=0.9, sufficient=True, valid=True, answer=None):
     async def structured(model, schema, instruction, data):
-        if schema is RelevanceGrade:
-            return schema(score=score, reason="Contains supporting facts")
+        if schema is RelevanceBatch:
+            return schema(
+                grades=[
+                    {"id": chunk["id"], "score": score, "reason": "Contains supporting facts"}
+                    for chunk in data["chunks"]
+                ]
+            )
         if schema is EvidenceAssessment:
             return schema(
                 sufficient=sufficient,
@@ -70,7 +74,7 @@ def seed(vectors):
     )
 
 
-async def test_grading_runs_concurrently_with_a_limit_of_three(vectors, monkeypatch):
+async def test_grading_batches_all_six_chunks_in_one_model_call(vectors, monkeypatch):
     import app.agents.nodes as nodes
 
     vectors.index(
@@ -82,30 +86,21 @@ async def test_grading_runs_concurrently_with_a_limit_of_three(vectors, monkeypa
     )
     mock_ai(monkeypatch)
     original = nodes.structured_call
-    active, peak = 0, 0
-    gate = asyncio.Event()
+    calls = []
 
     async def tracked(model, schema, instruction, data):
-        nonlocal active, peak
-        if schema is not RelevanceGrade:
-            return await original(model, schema, instruction, data)
-        active += 1
-        peak = max(peak, active)
-        if active == 3:
-            gate.set()
-        await asyncio.wait_for(gate.wait(), timeout=2)
-        await asyncio.sleep(0)
-        try:
-            return await original(model, schema, instruction, data)
-        finally:
-            active -= 1
+        if schema is RelevanceBatch:
+            calls.append(data)
+        return await original(model, schema, instruction, data)
 
     monkeypatch.setattr(nodes, "structured_call", tracked)
     events = await run_graph(vectors)
-    assert peak == 3
+    assert len(calls) == 1
+    assert {chunk["id"] for chunk in calls[0]["chunks"]} == {f"D{i}" for i in range(1, 7)}
     grades = [event["source"] for event in events if event["type"] == "grade"]
     assert len(grades) == 6
     assert {source["id"] for source in grades} == {f"D{i}" for i in range(1, 7)}
+    assert all(source["accepted"] for source in grades)
     assert events[-1]["valid"]
 
 
@@ -282,3 +277,59 @@ async def test_relevance_threshold_boundary(vectors, monkeypatch):
     mock_ai(monkeypatch, score=0.5)
     events = await run_graph(vectors)
     assert next(event for event in events if event["type"] == "grade")["source"]["accepted"]
+
+
+@pytest.mark.parametrize("ids", [["D1", "D1"], ["D2"], []])
+async def test_invalid_batch_ids_never_accept_unverified_grades(vectors, monkeypatch, ids):
+    import app.agents.nodes as nodes
+
+    seed(vectors)
+    mock_ai(monkeypatch)
+    original = nodes.structured_call
+
+    async def invalid(model, schema, instruction, data):
+        if schema is RelevanceBatch:
+            return schema(grades=[{"id": item, "score": 1, "reason": "Must be rejected"} for item in ids])
+        return await original(model, schema, instruction, data)
+
+    monkeypatch.setattr(nodes, "structured_call", invalid)
+    events = await run_graph(vectors)
+    grades = [event["source"] for event in events if event["type"] == "grade"]
+    assert all(not item["accepted"] and item["relevance"] == 0 for item in grades)
+
+
+async def test_batch_results_are_matched_by_id_instead_of_response_order(vectors, monkeypatch):
+    import app.agents.nodes as nodes
+
+    vectors.index(
+        "test_workspace",
+        "many",
+        "evidence.txt",
+        [
+            {"text": "Astronomy stars", "page": 1},
+            {"text": "Astronomy planets", "page": 2},
+        ],
+        "v1",
+    )
+    mock_ai(monkeypatch)
+    original = nodes.structured_call
+
+    async def reversed_grades(model, schema, instruction, data):
+        if schema is RelevanceBatch:
+            return schema(
+                grades=[
+                    {
+                        "id": chunk["id"],
+                        "score": 1 if chunk["id"] == "D1" else 0,
+                        "reason": "Relevant" if chunk["id"] == "D1" else "Unrelated",
+                    }
+                    for chunk in reversed(data["chunks"])
+                ]
+            )
+        return await original(model, schema, instruction, data)
+
+    monkeypatch.setattr(nodes, "structured_call", reversed_grades)
+    events = await run_graph(vectors)
+    grades = {e["source"]["id"]: e["source"] for e in events if e["type"] == "grade"}
+    assert grades["D1"]["accepted"] is True
+    assert grades["D2"]["accepted"] is False

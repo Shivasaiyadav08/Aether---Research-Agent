@@ -7,31 +7,38 @@ from time import perf_counter
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.config import get_stream_writer
 
-from app.agents.state import AnswerValidation, EvidenceAssessment, RelevanceGrade, RewrittenQuery
+from app.agents.state import AnswerValidation, EvidenceAssessment, RelevanceBatch, RewrittenQuery
 from app.services.ai import (
     UNTRUSTED_RULE,
     IncompleteAnswer,
+    ModelFallbackExhausted,
     call_with_free_fallback,
     create_llm,
     message_text,
+    is_model_unavailable,
     safe_service_error,
     search_web,
+    service_status,
     structured_call,
 )
 from app.services.free_models import model_availability
+
 
 # sends progress events to teh frontend
 def emit(event_type: str, **payload):
     get_stream_writer()({"type": event_type, **payload})
 
-#Announces the start of a workflow step and records its start time.
+
+# Announces the start of a workflow step and records its start time.
 def start_node(name):
     emit("node_start", node=name)
     return perf_counter()
 
+
 # Announces completion and reports execution time and details.
 def finish_node(name, started, **details):
     emit("node_end", node=name, duration_ms=round((perf_counter() - started) * 1000), details=details)
+
 
 # Checks whether the answer uses valid citation IDs.
 def citation_errors(answer: str, sources: list[dict]) -> list[str]:
@@ -43,24 +50,36 @@ def citation_errors(answer: str, sources: list[dict]) -> list[str]:
         errors.append("No evidence citations were included.")
     return errors
 
+
+def provider_failed(error: Exception) -> bool:
+    """An API outage does not establish irrelevant evidence or an ungrounded answer."""
+    return (
+        isinstance(error, ModelFallbackExhausted)
+        or service_status(error) is not None
+        or is_model_unavailable(error)
+    )
+
+
 # Creates and returns the agent's workflow node functions.
 def make_nodes(vectors):
     """Functions close over the vector store. The graph state contains only request data."""
-#Reports when the application switches models or runs out of fallback options.
+
+    # Reports when the application switches models or runs out of fallback options.
     def model_fallback(failed, replacement, reason):
         emit(
             "model_fallback",
             failed_model=failed,
             model=replacement,
             **model_availability(failed),
-            message=f"{failed}: {reason}. "
+            message=f"{failed}: {reason.rstrip('.')}. "
             + (
                 f"Switching to free-tier Gemini model {replacement}."
                 if replacement
-                else "No eligible fallback remains."
+                else "No further fallback will be attempted for this request."
             ),
         )
-#Makes structured AI calls and handles configured model fallbacks.
+
+    # Makes structured AI calls and handles configured model fallbacks.
     async def ask(state, schema, instruction, data):
         async def operation(model):
             return await structured_call(model, schema, instruction, data)
@@ -68,7 +87,8 @@ def make_nodes(vectors):
         if state.get("model_plan"):
             return await call_with_free_fallback(state["model_plan"], operation, model_fallback)
         return await operation(state["settings"]["model"])
-# Searches the vector store for relevant document chunks.
+
+    # Searches the vector store for relevant document chunks.
     async def retrieve(state):
         started = start_node("retrieve")
         plan = state.get("model_plan")
@@ -85,46 +105,52 @@ def make_nodes(vectors):
         emit("retrieval", sources=results)
         finish_node("retrieve", started, retrieved_count=len(results))
         return {"retrieved": results}
-# Uses AI to score each retrieved chunk for relevance and accept or reject it
+
+    # Uses AI to score each retrieved chunk for relevance and accept or reject it
     async def grade(state):
         started = start_node("grade")
-        graded = []
         warnings = list(state.get("warnings", []))
-        semaphore = asyncio.Semaphore(3)
-
-        async def grade_one(source):
+        judgments = {}
+        if state["retrieved"]:
             try:
-                async with semaphore:
-                    result = await ask(
-                        state,
-                        RelevanceGrade,
-                        "Grade whether this chunk provides facts useful for answering the question. "
-                        "Score 0 for unrelated text; 1 for direct supporting evidence.",
-                        {
-                            "question": state["question"],
-                            "history": state.get("history", []),
-                            "chunk": source["text"],
-                        },
+                result = await ask(
+                    state,
+                    RelevanceBatch,
+                    "Grade every supplied chunk for relevance to the question. Score 0 for unrelated "
+                    "text and 1 for direct supporting evidence. Return exactly one judgment per chunk "
+                    "using its exact supplied ID. Give each reason in one short sentence.",
+                    {
+                        "question": state["question"],
+                        "history": state.get("history", []),
+                        "chunks": [
+                            {"id": source["id"], "text": source["text"]} for source in state["retrieved"]
+                        ],
+                    },
+                )
+                expected = {source["id"] for source in state["retrieved"]}
+                ids = [item.id for item in result.grades]
+                if len(ids) == len(expected) and set(ids) == expected:
+                    judgments = {item.id: item for item in result.grades}
+                else:
+                    warnings.append(
+                        "Document grading returned missing, duplicate, or unknown chunk IDs; chunks excluded."
                     )
-                item = {
-                    **source,
-                    "relevance": result.score,
-                    "reason": result.reason,
-                    "accepted": result.score >= state["settings"]["relevance_threshold"],
-                }
             except Exception as error:
+                if provider_failed(error):
+                    raise
                 warnings.append(safe_service_error(error))
-                item = {
-                    **source,
-                    "relevance": 0,
-                    "reason": "Grading failed; chunk excluded.",
-                    "accepted": False,
-                }
-            emit("grade", source=item)
-            return item
 
-        # Events arrive when each request completes; gather preserves retrieval order.
-        graded = await asyncio.gather(*(grade_one(source) for source in state["retrieved"]))
+        graded = []
+        for source in state["retrieved"]:
+            judgment = judgments.get(source["id"])
+            item = {
+                **source,
+                "relevance": judgment.score if judgment else 0,
+                "reason": judgment.reason if judgment else "Grading failed; chunk excluded.",
+                "accepted": bool(judgment and judgment.score >= state["settings"]["relevance_threshold"]),
+            }
+            graded.append(item)
+            emit("grade", source=item)
         accepted = [source for source in graded if source["accepted"]]
         finish_node(
             "grade",
@@ -135,7 +161,8 @@ def make_nodes(vectors):
             threshold=state["settings"]["relevance_threshold"],
         )
         return {"retrieved": graded, "sources": accepted, "warnings": list(dict.fromkeys(warnings))}
-# Determines whether the accepted evidence sufficiently answers the question.
+
+    # Determines whether the accepted evidence sufficiently answers the question.
     async def assess(state):
         started = start_node("assess")
         warnings = list(state.get("warnings", []))
@@ -160,6 +187,8 @@ def make_nodes(vectors):
                 )
                 assessment = result.model_dump()
             except Exception as error:
+                if provider_failed(error):
+                    raise
                 warnings.append(safe_service_error(error))
                 assessment = {
                     "sufficient": False,
@@ -169,7 +198,8 @@ def make_nodes(vectors):
         emit("decision", route="documents" if assessment["sufficient"] else "web", **assessment)
         finish_node("assess", started, **assessment)
         return {"assessment": assessment, "warnings": warnings}
-#Rewrites the question into a focused web-search query when evidence is missing.
+
+    # Rewrites the question into a focused web-search query when evidence is missing.
     async def rewrite(state):
         started = start_node("rewrite")
         warnings = list(state.get("warnings", []))
@@ -194,7 +224,8 @@ def make_nodes(vectors):
         emit("rewrite", query=query)
         finish_node("rewrite", started, query=query)
         return {"rewritten_query": query, "warnings": warnings}
-# Searches the web and adds the resulting sources to the evidence.
+
+    # Searches the web and adds the resulting sources to the evidence.
     async def web_search(state):
         started = start_node("web_search")
         warnings = list(state.get("warnings", []))
@@ -211,7 +242,8 @@ def make_nodes(vectors):
         emit("web_sources", sources=sources)
         finish_node("web_search", started, source_count=len(sources), warnings=warnings)
         return {"sources": state["sources"] + sources, "warnings": warnings}
-# Generates and streams the answer using the supplied evidence
+
+    # Generates and streams the answer using the supplied evidence
     async def generate(state):
         started = start_node("generate")
         attempts = state.get("attempts", 0) + 1
@@ -280,7 +312,8 @@ def make_nodes(vectors):
                 )
         finish_node("generate", started, attempt=attempts, characters=len(answer))
         return {"answer": answer, "attempts": attempts}
-# Checks citation validity and, when enabled, semantic evidence support.
+
+    # Checks citation validity and, when enabled, semantic evidence support.
     async def validate(state):
         started = start_node("validate")
         errors = citation_errors(state["answer"], state["sources"])
@@ -297,6 +330,8 @@ def make_nodes(vectors):
                 if not result.grounded:
                     errors.append(result.reason)
             except Exception as error:
+                if provider_failed(error):
+                    raise
                 errors.append("Grounding validation could not complete.")
                 warnings.append(safe_service_error(error))
         feedback = "; ".join(errors)
@@ -308,7 +343,8 @@ def make_nodes(vectors):
             semantic_check=state["settings"]["validate_answer"] and bool(state["sources"]),
         )
         return {"valid": not errors, "feedback": feedback, "warnings": warnings}
-# Produces the final response, filters cited sources, and handles invalid answers.
+
+    # Produces the final response, filters cited sources, and handles invalid answers.
     async def finalize(state):
         started = start_node("finalize")
         warnings = list(dict.fromkeys(state.get("warnings", [])))
@@ -334,6 +370,7 @@ def make_nodes(vectors):
         "finalize": finalize,
     }
 
+
 # make_nodes(vectors)
 # Sets up the workflow functions
 # |
@@ -356,4 +393,4 @@ def make_nodes(vectors):
 # Create the answer
 # |
 # validate() → finalize()
-#Check and return the answer
+# Check and return the answer

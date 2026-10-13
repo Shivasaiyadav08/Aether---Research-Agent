@@ -19,7 +19,7 @@ embeddings, persistent Chroma, and a real LangGraph corrective RAG workflow.
   accept fewer chunks. This is a per-chunk score cutoff, not answer confidence.
 - The landing-page example shows the model and relevance controls. Preferences
   shares the same cutoff, and Intelligence records the cutoff used for each run.
-- Up to three chunks are graded concurrently. Citation prompting includes an
+- Retrieved chunks are graded together in one structured request. Citation prompting includes an
   explicit format example; citation and grounding checks remain enabled.
 - If the chosen model is unavailable, a real event explains the switch to a free
   fallback. Candidates have bounded attempts; no paid-only model is used.
@@ -207,7 +207,10 @@ A stale Gemini choice is visibly replaced by a currently verified candidate.
 The API does not report remaining quota. Real 429 errors trigger fallback and a
 60-second cooldown; 404 model-access failures use a five-minute cooldown. The
 selector counts down and re-enables models automatically when cooldowns expire.
-Transport and temporary server failures get one retry per candidate; they do not
+Transport and temporary server failures can get one retry per candidate; timeouts
+switch directly to another candidate when possible. Each operation allows at most
+three model attempts within 75 seconds by default. These limits are configurable
+with `GEMINI_MAX_MODEL_ATTEMPTS` and `GEMINI_OPERATION_TIMEOUT_SECONDS`. Failures do not
 disable models for unrelated requests or later workflow steps. Empty and truncated
 answers trigger fallback without marking the model globally unavailable. Cooldowns
 are scoped to the backend's current key. Invalid keys and invalid requests do not
@@ -228,7 +231,14 @@ Provider retries are disabled. Requests use a 30-second transport timeout, an
 disabled. Thought/signature blocks are not streamed into the visible answer.
 Tavily web search and local MiniLM embeddings remain separate.
 
-Grading still uses `asyncio.Semaphore(3)` plus `asyncio.gather`. Citation correction
+Grading sends all retrieved chunk IDs and texts in one request, validates complete,
+unique ID coverage, and emits each chunk's separate score and reason. Structured
+judgments use a 2,048-token output cap, configurable with
+`GEMINI_STRUCTURED_MAX_OUTPUT_TOKENS`; answer generation retains its 8,192-token cap.
+Exhausted provider failures during grading, sufficiency assessment, or grounding
+validation stop the run with the service error. They do not trigger web search or
+answer regeneration by treating an outage as a negative evidence judgment.
+Citation correction
 can regenerate once, and evidence/grounding checks remain intact. No fixed latency
 is promised: quotas, model queues, network, and initial embedding load still matter.
 
