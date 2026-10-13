@@ -19,7 +19,7 @@ export default async function ResearchPage() {
             stays closed until setup is complete.
           </p>
           <Link className="landing-cta" href="/">
-            Back to Aether
+            Back to Crebry
           </Link>
         </div>
       </AuthShell>

@@ -25,7 +25,7 @@ export default function Page() {
         <Link
           className="landing-logo"
           href="/"
-          aria-label="Aether Research Lab home"
+          aria-label="Crebry — The Research Agent home"
         >
           <Brand />
         </Link>
@@ -69,8 +69,7 @@ export default function Page() {
       <section className="landing-hero" id="main">
         <div className="hero-copy">
           <div className="hero-kicker">
-            <span className="tiny-rule" /> A personal workspace for deeper
-            understanding
+            <span className="tiny-rule" /> Autonomous research agent
           </div>
           <h1>
             Research
@@ -78,15 +77,15 @@ export default function Page() {
             with clarity<span>.</span>
           </h1>
           <p>
-            Explore questions, work with your sources, and turn information into
-            understanding — all in one workspace.
+            Explore questions, synthesize complex sources, and turn information into
+            evidence-backed answers — all in one focused workspace.
           </p>
           <div className="landing-actions">
             <Link className="landing-cta" href="/research">
               Start researching <ArrowUpRight size={17} />
             </Link>
             <a className="secondary-link" href="#workspace">
-              Explore Aether <ArrowRight size={16} />
+              Explore Crebry <ArrowRight size={16} />
             </a>
           </div>
           <div className="hero-footnote">
@@ -133,7 +132,7 @@ export default function Page() {
             <span className="notebook-index">03</span>
           </div>
           <div className="notebook-bottom">
-            Aether Research Lab{" "}
+            Crebry — The Research Agent{" "}
             <span>
               Built around the evidence <ArrowUpRight size={13} />
             </span>
@@ -187,7 +186,7 @@ export default function Page() {
               n: "02",
               icon: Globe2,
               title: "Ask. Explore. Go deeper.",
-              text: "Choose a free Gemini model and set the minimum document relevance beside it, starting at 50%. Aether checks whether the accepted evidence covers your question and explores web sources when there is a gap.",
+              text: "Choose an AI research model and set the minimum document relevance beside it, starting at 50%. Crebry checks whether the accepted evidence covers your question and explores web sources when there is a gap.",
             },
             {
               n: "03",
@@ -225,7 +224,7 @@ export default function Page() {
             Start researching <ArrowUpRight size={16} />
           </Link>
           <details className="privacy-details">
-            <summary>How Aether works with your information</summary>
+            <summary>How Crebry works with your information</summary>
             <p>
               Documents and conversations belong to your account. Document
               embeddings run locally on the server. Relevant passages and
@@ -237,7 +236,7 @@ export default function Page() {
         </div>
       </section>
       <footer className="landing-footer">
-        <Link className="landing-logo" href="/" aria-label="Aether home">
+        <Link className="landing-logo" href="/" aria-label="Crebry home">
           <Brand />
         </Link>
         <span>Made for curiosity. Grounded in evidence.</span>

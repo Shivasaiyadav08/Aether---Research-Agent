@@ -13,7 +13,7 @@ export default function Page() {
           <h2>Your research starts here.</h2>
           <p>Add Clerk application keys to enable secure accounts.</p>
           <Link href="/" className="landing-cta">
-            Back to Aether
+            Back to Crebry
           </Link>
         </div>
       )}

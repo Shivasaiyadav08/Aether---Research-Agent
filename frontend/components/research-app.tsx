@@ -13,7 +13,6 @@ import { UserButton, useUser } from "@clerk/nextjs";
 import Link from "next/link";
 import {
   BookOpen,
-  ChevronDown,
   ChevronRight,
   Command,
   FolderOpen,
@@ -37,6 +36,7 @@ import { Button } from "@/components/ui/button";
 import { Chat } from "@/components/chat";
 import { Documents } from "@/components/documents";
 import { Workspaces } from "@/components/workspaces";
+import { WorkspacePicker } from "@/components/workspace-picker";
 import { SourceDialog } from "@/components/source-dialog";
 import { BrandMark } from "@/components/brand";
 import { FreeModelPicker } from "@/components/free-model-picker";
@@ -91,7 +91,7 @@ export function ResearchApp({ userId }: { userId: string }) {
     update,
     newChat,
   } = state;
-  const { resolvedTheme, setTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -151,14 +151,25 @@ export function ResearchApp({ userId }: { userId: string }) {
       ]);
       if (useResearch.getState().sessionId !== userId) return;
       const currentId = useResearch.getState().workspaceId;
+      const savedId =
+        typeof window !== "undefined"
+          ? localStorage.getItem("crebry_workspace_" + userId)
+          : null;
+      const targetId = workspaces.some((w) => w.id === savedId)
+        ? savedId!
+        : workspaces.some((workspace) => workspace.id === currentId)
+          ? currentId
+          : (workspaces[0]?.id ?? "");
+
       update({
         health,
         workspaces,
-        workspaceId: workspaces.some((workspace) => workspace.id === currentId)
-          ? currentId
-          : (workspaces[0]?.id ?? ""),
+        workspaceId: targetId,
         error: "",
       });
+      if (targetId && typeof window !== "undefined") {
+        localStorage.setItem("crebry_workspace_" + userId, targetId);
+      }
       try {
         const models = await api<Model[]>("/models");
         if (useResearch.getState().sessionId !== userId) return;
@@ -318,40 +329,24 @@ export function ResearchApp({ userId }: { userId: string }) {
             <BrandMark />
           </div>
           <div>
-            <strong>aether</strong>
-            <small>Research lab</small>
+            <strong>Crebry</strong>
+            <small>The Research Agent</small>
           </div>
         </div>
-        <div className="workspace-picker">
-          <FolderOpen size={16} />
-          <select
-            aria-label="Current workspace"
-            value={workspaceId}
-            disabled={busy || !workspaces.length}
-            onChange={(event) => {
-              newChat();
-              update({ workspaceId: event.target.value, conversations: [] });
-            }}
-          >
-            <option value="" disabled>
-              {connecting ? "Connecting…" : "No workspace"}
-            </option>
-            {workspaces.map((workspace) => (
-              <option key={workspace.id} value={workspace.id}>
-                {workspace.name}
-              </option>
-            ))}
-          </select>
-          <ChevronDown size={13} />
-          <button
-            title="Manage workspaces"
-            aria-label="Manage workspaces"
-            disabled={busy}
-            onClick={() => setWorkspaceOpen(true)}
-          >
-            <Plus size={15} />
-          </button>
-        </div>
+        <WorkspacePicker
+          workspaces={workspaces}
+          workspaceId={workspaceId}
+          busy={busy}
+          connecting={connecting}
+          onSelect={(id) => {
+            newChat();
+            update({ workspaceId: id, conversations: [] });
+            if (typeof window !== "undefined") {
+              localStorage.setItem("crebry_workspace_" + userId, id);
+            }
+          }}
+          onOpenManage={() => setWorkspaceOpen(true)}
+        />
         <Button
           variant="outline"
           className="new-research"
@@ -469,7 +464,7 @@ export function ResearchApp({ userId }: { userId: string }) {
           <Link className="learn-link" href="/">
             <span>
               <strong>Follow the evidence</strong>
-              <small>About Aether Research</small>
+              <small>About Crebry</small>
             </span>
           </Link>
           <div className="profile">
@@ -513,7 +508,7 @@ export function ResearchApp({ userId }: { userId: string }) {
             >
               <PanelLeftOpen size={18} />
             </button>
-            <span>{currentWorkspace?.name ?? "Aether Research"}</span>
+            <span>{currentWorkspace?.name ?? "Crebry"}</span>
             <ChevronRight size={13} />
             <strong>
               {view === "research"
@@ -613,19 +608,29 @@ export function ResearchApp({ userId }: { userId: string }) {
           <div className="preference-row">
             <div>
               <strong>Appearance</strong>
-              <p>Choose a monochrome theme.</p>
+              <p>Choose your interface theme.</p>
             </div>
             <div className="segmented">
               <button
-                aria-pressed={resolvedTheme === "dark"}
-                className={resolvedTheme === "dark" ? "selected" : ""}
+                type="button"
+                aria-pressed={theme === "system"}
+                className={theme === "system" ? "selected" : ""}
+                onClick={() => setTheme("system")}
+              >
+                System
+              </button>
+              <button
+                type="button"
+                aria-pressed={theme === "dark"}
+                className={theme === "dark" ? "selected" : ""}
                 onClick={() => setTheme("dark")}
               >
                 Dark
               </button>
               <button
-                aria-pressed={resolvedTheme === "light"}
-                className={resolvedTheme === "light" ? "selected" : ""}
+                type="button"
+                aria-pressed={theme === "light"}
+                className={theme === "light" ? "selected" : ""}
                 onClick={() => setTheme("light")}
               >
                 Light
