@@ -69,13 +69,31 @@ async function forward(
       }
       body = joined.buffer;
     }
-    const response = await fetch(url, {
-      method: request.method,
-      headers,
-      body,
-      cache: "no-store",
-      signal: request.signal,
-    });
+  
+const startedAt = Date.now();
+
+console.info("[backend-proxy] Upstream request started", {
+  method: request.method,
+  pathname: new URL(url).pathname,
+  hasBody: body !== undefined,
+  bodyBytes: body?.byteLength ?? 0,
+});
+
+const response = await fetch(url, {
+  method: request.method,
+  headers,
+  body,
+  cache: "no-store",
+  signal: request.signal,
+});
+
+console.info("[backend-proxy] Upstream response received", {
+  method: request.method,
+  pathname: new URL(url).pathname,
+  status: response.status,
+  elapsedMs: Date.now() - startedAt,
+});
+
     const resultHeaders = new Headers();
     for (const name of [
       "content-type",
