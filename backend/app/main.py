@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 import logging
-from threading import RLock
+from threading import BoundedSemaphore, RLock
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,8 +10,11 @@ from sqlalchemy import select
 from app.agents.graph import build_graph
 from app.api.routes import router
 from app.core.config import config
+from app.core.memory import configure_process_memory_environment
 from app.models.database import AppSettings, WorkflowRun, create_database
 from app.services.vector import VectorStore
+
+configure_process_memory_environment()
 
 
 @asynccontextmanager
@@ -21,6 +24,7 @@ async def lifespan(app):
     app.state.vectors = VectorStore(config.data_dir, config.embedding_model)
     app.state.graph = build_graph(app.state.vectors)
     app.state.mutation_lock = RLock()
+    app.state.embedding_semaphore = BoundedSemaphore(config.max_concurrent_embeddings)
     app.state.active_workspaces = {}
     with db_factory() as db:
         if db.get(AppSettings, 1) is None:

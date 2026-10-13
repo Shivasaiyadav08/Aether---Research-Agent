@@ -1,16 +1,19 @@
 import asyncio
+import hashlib
 import json
-import shutil
 from pathlib import Path
+import tempfile
 from time import perf_counter
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select
+from sqlalchemy.orm import defer
 
 from app.core.config import config
 from app.core.auth import authorize_request, require_workspace_owner
+from app.core.memory import check_and_collect_garbage, get_process_memory_mb
 from app.models.database import (
     AppSettings,
     Conversation,
@@ -21,6 +24,7 @@ from app.models.database import (
     as_dict,
     new_id,
 )
+from app.services import storage
 from app.services.ai import safe_service_error
 from app.services.free_models import get_free_models
 from app.services.documents import extract_text, index_document, upload_document
@@ -66,10 +70,12 @@ def require_record(db, table, record_id):
 
 
 def document_summary(document):
-    result = as_dict(document)
-    result.pop("text")
-    result.pop("content_hash")
-    return result
+    """Serialize document metadata without loading or keeping the large text column in memory."""
+    return {
+        col.name: getattr(document, col.name)
+        for col in document.__table__.columns
+        if col.name not in ("text", "content_hash")
+    }
 
 
 def ensure_workspace_idle(request, workspace_id):
@@ -81,17 +87,24 @@ def ensure_workspace_idle(request, workspace_id):
 def health(request: Request):
     with request.app.state.db() as db:
         db.execute(select(1))
-    return {
+    payload = {
         "status": "ok",
         "gemini_configured": bool(config.gemini_api_key),
         "tavily_configured": bool(config.tavily_api_key),
         "embedding_model": config.embedding_model,
+        "embedding_provider": config.embedding_provider,
         "embeddings_loaded": request.app.state.vectors.model is not None,
+        "storage_provider": "r2" if bool(config.r2_account_id and config.r2_bucket_name) else "local",
+        "ocr_enabled": config.gemini_ocr_enabled and bool(config.gemini_api_key),
         "max_upload_mb": config.max_upload_mb,
         "single_user": False,
         "authentication": "clerk",
         "clerk_configured": bool(config.clerk_secret_key or config.clerk_jwt_key),
     }
+    if config.enable_memory_diagnostics:
+        payload["memory_rss_mb"] = get_process_memory_mb()
+        payload["embedding_batch_size"] = config.embedding_batch_size
+    return payload
 
 
 @router.get("/workspaces")
@@ -145,9 +158,7 @@ def delete_workspace(workspace_id: str, request: Request):
         ensure_workspace_idle(request, workspace_id)
         workspace = require_record(db, Workspace, workspace_id)
         request.app.state.vectors.delete_workspace(workspace_id)
-        folder = config.data_dir / "uploads" / workspace_id
-        if folder.exists():
-            shutil.rmtree(folder)
+        storage.delete_workspace_files(workspace_id)
         db.delete(workspace)
         db.commit()
 
@@ -157,7 +168,10 @@ def list_documents(workspace_id: str, request: Request, search: str = ""):
     with request.app.state.db() as db:
         require_record(db, Workspace, workspace_id)
         rows = db.scalars(
-            select(Document).where(Document.workspace_id == workspace_id).order_by(Document.created_at.desc())
+            select(Document)
+            .options(defer(Document.text))
+            .where(Document.workspace_id == workspace_id)
+            .order_by(Document.created_at.desc())
         )
         return [document_summary(row) for row in rows if search.lower() in row.name.lower()]
 
@@ -167,29 +181,69 @@ def upload_documents(workspace_id: str, request: Request, files: list[UploadFile
     if not 1 <= len(files) <= 10:
         raise HTTPException(422, "Upload between 1 and 10 files per request.")
     results = []
+    sem = getattr(request.app.state, "embedding_semaphore", None)
+
     with request.app.state.mutation_lock, request.app.state.vectors.lock, request.app.state.db() as db:
         ensure_workspace_idle(request, workspace_id)
         require_record(db, Workspace, workspace_id)
+        temp_dir = config.data_dir / ".tmp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        max_bytes = config.max_upload_mb * 1024 * 1024
+
         for file in files:
+            temp_path = None
             try:
-                content = file.file.read(config.max_upload_mb * 1024 * 1024 + 1)
-                if not content:
+                temp_file = tempfile.NamedTemporaryFile(dir=temp_dir, delete=False)
+                temp_path = Path(temp_file.name)
+                hasher = hashlib.sha256()
+                total_size = 0
+
+                with temp_file:
+                    while chunk := file.file.read(65536):
+                        total_size += len(chunk)
+                        if total_size > max_bytes:
+                            raise ValueError(f"File exceeds {config.max_upload_mb} MB.")
+                        hasher.update(chunk)
+                        temp_file.write(chunk)
+
+                if total_size == 0:
                     raise ValueError("Empty files cannot be indexed.")
-                if len(content) > config.max_upload_mb * 1024 * 1024:
-                    raise ValueError(f"File exceeds {config.max_upload_mb} MB.")
-                document, duplicate = upload_document(
-                    db,
-                    request.app.state.vectors,
-                    config.data_dir,
-                    workspace_id,
-                    file.filename or "file",
-                    content,
-                )
+
+                content_hash = hasher.hexdigest()
+
+                if sem:
+                    with sem:
+                        document, duplicate = upload_document(
+                            db,
+                            request.app.state.vectors,
+                            config.data_dir,
+                            workspace_id,
+                            file.filename or "file",
+                            temp_path,
+                            file_size=total_size,
+                            content_hash=content_hash,
+                        )
+                else:
+                    document, duplicate = upload_document(
+                        db,
+                        request.app.state.vectors,
+                        config.data_dir,
+                        workspace_id,
+                        file.filename or "file",
+                        temp_path,
+                        file_size=total_size,
+                        content_hash=content_hash,
+                    )
+
                 results.append({"document": document_summary(document), "duplicate": duplicate})
             except ValueError as error:
                 results.append({"name": file.filename, "error": str(error)})
             finally:
+                if temp_path and temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
                 file.file.close()
+
+    check_and_collect_garbage(threshold_mb=config.gc_threshold_mb)
     return results
 
 
@@ -215,29 +269,50 @@ def owned_document(db, workspace_id, document_id):
 def original_document(workspace_id: str, document_id: str, request: Request):
     with request.app.state.db() as db:
         document = owned_document(db, workspace_id, document_id)
-        path = config.data_dir / "uploads" / workspace_id / document.id
-        if not path.is_file():
+        if storage.file_exists_locally(workspace_id, document_id):
+            return FileResponse(storage.local_path(workspace_id, document_id), filename=document.name, media_type="application/octet-stream")
+        try:
+            content = storage.download_file(workspace_id, document_id)
+            return Response(
+                content=content,
+                media_type="application/octet-stream",
+                headers={"Content-Disposition": f'attachment; filename="{document.name}"'},
+            )
+        except Exception:
             raise HTTPException(404, "Original file is unavailable.")
-        return FileResponse(path, filename=document.name, media_type="application/octet-stream")
 
 
 @router.post("/workspaces/{workspace_id}/documents/{document_id}/reindex")
 def reindex_document(workspace_id: str, document_id: str, request: Request):
+    sem = getattr(request.app.state, "embedding_semaphore", None)
     with request.app.state.mutation_lock, request.app.state.vectors.lock, request.app.state.db() as db:
         ensure_workspace_idle(request, workspace_id)
         document = owned_document(db, workspace_id, document_id)
-        path = config.data_dir / "uploads" / workspace_id / document.id
-        if not path.is_file():
+        source = None
+        if storage.file_exists_locally(workspace_id, document_id):
+            source = storage.local_path(workspace_id, document_id)
+        else:
+            try:
+                source = storage.download_file(workspace_id, document_id)
+            except Exception:
+                pass
+        if source is None:
             raise HTTPException(404, "Original file is unavailable; upload it again.")
         try:
-            segments = extract_text(path.read_bytes(), Path(document.name).suffix.lower())
-            index_document(db, request.app.state.vectors, document, segments)
+            segments = extract_text(source, Path(document.name).suffix.lower())
+            if sem:
+                with sem:
+                    index_document(db, request.app.state.vectors, document, segments)
+            else:
+                index_document(db, request.app.state.vectors, document, segments)
         except Exception as error:
             document.error = (
                 "Reindexing failed. Any previous index is preserved. Check local model and disk access."
             )
             db.commit()
             raise HTTPException(503, document.error) from error
+        finally:
+            check_and_collect_garbage(threshold_mb=config.gc_threshold_mb)
         return document_summary(document)
 
 
@@ -247,7 +322,7 @@ def delete_document(workspace_id: str, document_id: str, request: Request):
         ensure_workspace_idle(request, workspace_id)
         document = owned_document(db, workspace_id, document_id)
         request.app.state.vectors.delete_document(workspace_id, document_id)
-        (config.data_dir / "uploads" / workspace_id / document.id).unlink(missing_ok=True)
+        storage.delete_file(workspace_id, document_id)
         db.delete(document)
         db.commit()
 

@@ -6,6 +6,7 @@
 # chunk_text()	Splits extracted text into smaller chunks of 800 characters, with 150 characters of overlap.
 # upload_document()	Main upload function. Validates files, detects duplicates, saves the document, and starts indexing.
 # index_document()	Indexes document chunks in the vector store and updates the database with indexing status.
+import base64
 import hashlib
 import logging
 import re
@@ -19,7 +20,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.core.config import config
+from app.core.memory import check_and_collect_garbage, log_stage_memory
 from app.models.database import Document, new_id
+from app.services import storage
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 
@@ -30,38 +34,118 @@ def clean_text(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+", " ", text)).strip()
 
 
-def extract_text(content: bytes, extension: str) -> list[dict]: 
-    """Extract page-aware PDF text, Word paragraphs/tables, or UTF-8 plain text."""
+def ocr_page_image(page) -> str:
+    """Render a scanned PDF page to JPEG and transcribe using Gemini Vision."""
+    try:
+        pix = page.get_pixmap(dpi=150)
+        jpeg_bytes = pix.tobytes("jpeg")
+        del pix
+        b64 = base64.b64encode(jpeg_bytes).decode("ascii")
+        del jpeg_bytes
+
+        from langchain_core.messages import HumanMessage
+        from app.services.ai import create_llm
+
+        llm = create_llm(config.gemini_ocr_model)
+        msg = HumanMessage(
+            content=[
+                {
+                    "type": "text",
+                    "text": (
+                        "Transcribe all readable text from this scanned document page accurately. "
+                        "Preserve original paragraph structure. "
+                        "Return ONLY the transcribed text without conversational commentary or markdown code blocks."
+                    ),
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                },
+            ]
+        )
+        response = llm.invoke([msg])
+        del b64
+        return clean_text(getattr(response, "content", "") or "")
+    except Exception as exc:
+        logging.getLogger("aether.documents").warning("Gemini OCR failed for page: %s", exc)
+        return ""
+
+
+def extract_text(source: bytes | Path | str, extension: str) -> list[dict]: 
+    """Extract page-aware PDF text, Word paragraphs/tables, or UTF-8 plain text.
+
+    Supports both file paths (for low memory usage) and bytes (for in-memory sources).
+    """
+    max_chars = config.max_extracted_chars
+    total_chars = 0
+    segments = []
+
     try:
         if extension == ".pdf":
-            with pymupdf.open(stream=content, filetype="pdf") as pdf:
+            pdf_context = (
+                pymupdf.open(str(source))
+                if isinstance(source, (str, Path))
+                else pymupdf.open(stream=source, filetype="pdf")
+            )
+            with pdf_context as pdf:
                 if pdf.is_encrypted:
                     raise ValueError("Password-protected PDFs are not supported.")
-                segments = [
-                    {"text": clean_text(page.get_text()), "page": i + 1} for i, page in enumerate(pdf)
-                ]
+                for i, page in enumerate(pdf):
+                    cleaned = clean_text(page.get_text())
+                    if not cleaned and config.gemini_ocr_enabled and config.gemini_api_key:
+                        cleaned = ocr_page_image(page)
+                    if cleaned:
+                        total_chars += len(cleaned)
+                        if total_chars > max_chars:
+                            raise ValueError(
+                                f"Extracted text exceeds the {max_chars // 1_000_000} million character limit. Split this document."
+                            )
+                        segments.append({"text": cleaned, "page": i + 1})
+
         elif extension == ".docx":
-            doc = WordDocument(BytesIO(content))
+            doc = (
+                WordDocument(str(source))
+                if isinstance(source, (str, Path))
+                else WordDocument(BytesIO(source))
+            )
             paragraphs = [paragraph.text for paragraph in doc.paragraphs]
             paragraphs += [
                 " | ".join(cell.text for cell in row.cells) for table in doc.tables for row in table.rows
             ]
-            segments = [{"text": clean_text("\n\n".join(paragraphs)), "page": 0}]
+            cleaned = clean_text("\n\n".join(paragraphs))
+            if cleaned:
+                if len(cleaned) > max_chars:
+                    raise ValueError(
+                        f"Extracted text exceeds the {max_chars // 1_000_000} million character limit. Split this document."
+                    )
+                segments.append({"text": cleaned, "page": 0})
+
         elif extension in {".txt", ".md", ".markdown"}:
-            segments = [{"text": clean_text(content.decode("utf-8-sig")), "page": 0}]
+            raw_text = (
+                Path(source).read_text(encoding="utf-8-sig")
+                if isinstance(source, (str, Path))
+                else source.decode("utf-8-sig")
+            )
+            cleaned = clean_text(raw_text)
+            if cleaned:
+                if len(cleaned) > max_chars:
+                    raise ValueError(
+                        f"Extracted text exceeds the {max_chars // 1_000_000} million character limit. Split this document."
+                    )
+                segments.append({"text": cleaned, "page": 0})
         else:
             raise ValueError("Supported files: PDF, DOCX, TXT, and Markdown.")
+
     except (ValueError, UnicodeDecodeError) as error:
         raise ValueError(
             str(error) if isinstance(error, ValueError) else "Save text files as UTF-8."
         ) from error
     except Exception as error:
         raise ValueError("This file is damaged or its contents do not match its extension.") from error
-    segments = [segment for segment in segments if segment["text"]]
+
     if not segments:
         raise ValueError("No readable text found. Scanned PDFs need OCR before upload.")
-    if sum(len(segment["text"]) for segment in segments) > 2_000_000:
-        raise ValueError("Extracted text exceeds the 2 million character limit. Split this document.")
+
     return segments
 
 
@@ -73,26 +157,56 @@ def chunk_text(segments: list[dict]) -> list[dict]:
         for chunk in splitter.split_text(segment["text"])
     ]
 
-# uses model db, extract_text(),
-def upload_document(db, vectors, data_dir, workspace_id, name, content):
+
+def upload_document(
+    db,
+    vectors,
+    data_dir,
+    workspace_id,
+    name,
+    content_or_path: bytes | Path | str,
+    file_size: int | None = None,
+    content_hash: str | None = None,
+):
     """Validate, prevent duplicates, persist the original, then index extracted chunks."""
     name = name.replace("\\", "/").rsplit("/", 1)[-1][:240]
     extension = Path(name).suffix.lower()
     if extension not in SUPPORTED_EXTENSIONS:
         raise ValueError("Supported files: PDF, DOCX, TXT, and Markdown.")
-    content_hash = hashlib.sha256(content).hexdigest()
+
+    is_path = isinstance(content_or_path, (str, Path))
+    if is_path:
+        file_path = Path(content_or_path)
+        if file_size is None:
+            file_size = file_path.stat().st_size
+        if content_hash is None:
+            hasher = hashlib.sha256()
+            with open(file_path, "rb") as f:
+                while chunk := f.read(65536):
+                    hasher.update(chunk)
+            content_hash = hasher.hexdigest()
+    else:
+        file_size = len(content_or_path)
+        content_hash = hashlib.sha256(content_or_path).hexdigest()
+
     existing = db.scalar(
         select(Document).where(Document.workspace_id == workspace_id, Document.content_hash == content_hash)
     )
     if existing:
+        if is_path:
+            Path(content_or_path).unlink(missing_ok=True)
         return existing, True
-    segments = extract_text(content, extension)
+
+    log_stage_memory("before_extract_text", doc_name=name)
+    segments = extract_text(content_or_path, extension)
+    log_stage_memory("after_extract_text", doc_name=name, segment_count=len(segments))
+
     document = Document(
         id=new_id(),
         workspace_id=workspace_id,
         name=name,
         content_hash=content_hash,
-        size=len(content),
+        size=file_size,
         text="\n\n".join(segment["text"] for segment in segments),
     )
     db.add(document)
@@ -100,15 +214,16 @@ def upload_document(db, vectors, data_dir, workspace_id, name, content):
         db.commit()
     except IntegrityError:
         db.rollback()
+        if is_path:
+            Path(content_or_path).unlink(missing_ok=True)
         return db.scalar(
             select(Document).where(
                 Document.workspace_id == workspace_id, Document.content_hash == content_hash
             )
         ), True
-    folder = data_dir / "uploads" / workspace_id
-    folder.mkdir(parents=True, exist_ok=True)
+
     try:
-        (folder / document.id).write_bytes(content)
+        storage.upload_file(workspace_id, document.id, content_or_path)
         index_document(db, vectors, document, segments)
     except Exception as error:
         logging.getLogger("aether").warning(
@@ -119,9 +234,13 @@ def upload_document(db, vectors, data_dir, workspace_id, name, content):
             "Indexing failed. Check local model download, disk space, and backend logs; then reindex."
         )
         db.commit()
+    finally:
+        del segments
+        check_and_collect_garbage(threshold_mb=config.gc_threshold_mb)
+
     return document, False
 
-# uses chunks_text()
+
 def index_document(db, vectors, document, segments):
     """Stage a new version. Keep the previous index if rebuilding fails."""
     with vectors.lock:
@@ -145,3 +264,5 @@ def index_document(db, vectors, document, segments):
             raise
         if previous_version:
             vectors.delete_document(document.workspace_id, document.id, previous_version)
+        del chunks
+        check_and_collect_garbage(threshold_mb=config.gc_threshold_mb)

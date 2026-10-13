@@ -58,8 +58,23 @@ class Config(BaseSettings):
     gemini_model: str = "auto"
     data_dir: Path = Path(__file__).resolve().parents[2] / "data"
     frontend_origin: str = "http://localhost:3000"
-    max_upload_mb: int = Field(default=20, ge=1, le=100)
+    max_upload_mb: int = Field(default=10, ge=1, le=100)
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_batch_size: int = Field(default=32, ge=1, le=128)
+    max_concurrent_embeddings: int = Field(default=1, ge=1, le=8)
+    max_extracted_chars: int = Field(default=2_000_000, ge=10_000, le=10_000_000)
+    enable_memory_diagnostics: bool = Field(default=True)
+    gc_threshold_mb: float = Field(default=400.0, ge=100.0, le=2000.0)
+    # Cloudflare R2 storage (optional — falls back to local disk when blank)
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = ""
+    # Embedding provider: "local" (MiniLM, ~420 MB) or "gemini" (~150 MB)
+    embedding_provider: str = Field(default="local", pattern=r"^(local|gemini)$")
+    # Gemini Cloud OCR for scanned PDFs (uses existing GEMINI_API_KEY)
+    gemini_ocr_enabled: bool = Field(default=True)
+    gemini_ocr_model: str = "gemini-2.5-flash"
 
 
 config = Config()

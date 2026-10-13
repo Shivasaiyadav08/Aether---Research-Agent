@@ -85,6 +85,23 @@ GEMINI_API_KEY=your_actual_gemini_key
 TAVILY_API_KEY=your_actual_key
 CLERK_SECRET_KEY=your_actual_clerk_secret_key
 CLERK_AUTHORIZED_PARTIES=http://localhost:3000,http://127.0.0.1:3000
+
+# Optional: Cloudflare R2 Persistent Storage (free tier: 10 GB storage, zero egress fees)
+# If omitted or left blank, files are stored on local backend disk (ephemeral on free Render).
+R2_ACCOUNT_ID=your_cloudflare_account_id
+R2_ACCESS_KEY_ID=your_r2_access_key_id
+R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
+R2_BUCKET_NAME=your_r2_bucket_name
+
+# Optional: Ultra-low RAM embedding mode for Render 512 MB tier
+# "local"  -> sentence-transformers/all-MiniLM-L6-v2 (~420 MB peak RAM)
+# "gemini" -> Google text-embedding-004 via API (~150 MB peak RAM, zero PyTorch overhead)
+EMBEDDING_PROVIDER=local
+
+# Optional: Scanned PDF OCR (enabled by default; uses your existing GEMINI_API_KEY)
+GEMINI_OCR_ENABLED=true
+GEMINI_OCR_MODEL=gemini-2.5-flash
+MAX_UPLOAD_MB=10
 ```
 
 `core/config.py` reads root `.env` first and `backend/.env` second. Nonempty
