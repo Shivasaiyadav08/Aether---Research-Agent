@@ -68,6 +68,10 @@ export function Workspaces({
       if (!editing) {
         newChat();
         update({ workspaceId: record.id });
+        if (sessionId && typeof window !== "undefined") {
+          localStorage.setItem("crebry_workspace_" + sessionId, record.id);
+        }
+        onOpenChange(false);
       }
       setName("");
       setEditing(null);
@@ -90,7 +94,11 @@ export function Workspaces({
       update({ workspaces: records });
       if (workspaceId === deleting.id) {
         newChat();
-        update({ workspaceId: records[0]?.id ?? "", conversations: [] });
+        const nextId = records[0]?.id ?? "";
+        update({ workspaceId: nextId, conversations: [] });
+        if (sessionId && typeof window !== "undefined") {
+          localStorage.setItem("crebry_workspace_" + sessionId, nextId);
+        }
       }
       setDeleting(null);
       setConfirmation("");
@@ -118,7 +126,40 @@ export function Workspaces({
           {workspaces.map((workspace) => (
             <div className="workspace-row" key={workspace.id}>
               <FolderOpen size={17} />
-              <div className="workspace-info">
+              <div
+                className="workspace-info"
+                role="button"
+                tabIndex={0}
+                style={{ cursor: "pointer" }}
+                onClick={() => {
+                  if (workspace.id !== workspaceId) {
+                    newChat();
+                    update({ workspaceId: workspace.id, conversations: [] });
+                    if (sessionId && typeof window !== "undefined") {
+                      localStorage.setItem(
+                        "crebry_workspace_" + sessionId,
+                        workspace.id,
+                      );
+                    }
+                  }
+                  onOpenChange(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    if (workspace.id !== workspaceId) {
+                      newChat();
+                      update({ workspaceId: workspace.id, conversations: [] });
+                      if (sessionId && typeof window !== "undefined") {
+                        localStorage.setItem(
+                          "crebry_workspace_" + sessionId,
+                          workspace.id,
+                        );
+                      }
+                    }
+                    onOpenChange(false);
+                  }
+                }}
+              >
                 <strong>{workspace.name}</strong>
                 <small>
                   {workspace.document_count ?? 0} documents ·{" "}

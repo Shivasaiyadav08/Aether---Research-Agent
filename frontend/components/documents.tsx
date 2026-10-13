@@ -80,13 +80,18 @@ export function Documents() {
   );
 
   async function upload(files: FileList | File[]) {
-    if (uploading || streaming || !workspaceId) return;
+    if (uploading || streaming) return;
+    if (!workspaceId) {
+      setError("Please select or create a workspace before uploading documents.");
+      return;
+    }
     const items = Array.from(files);
+    if (!items.length) return;
     if (items.length > 10) {
       setError("Choose up to 10 files at a time.");
       return;
     }
-    const limit = Math.min(health?.max_upload_mb ?? 20, 20);
+    const limit = health?.max_upload_mb ?? 10;
     const invalid = items.find(
       (file) =>
         !/\.(pdf|docx|txt|md|markdown)$/i.test(file.name) ||
@@ -249,15 +254,41 @@ export function Documents() {
         </div>
       </div>
       <div
-        className={`dropzone ${dragging ? "dragging" : ""}`}
+        className={`dropzone ${dragging ? "dragging" : ""} ${!workspaceId || uploading || streaming ? "disabled" : ""}`}
+        role="button"
+        tabIndex={!workspaceId || uploading || streaming ? -1 : 0}
+        aria-label="Upload research material. Click or drag files into this area."
+        onClick={() => {
+          if (!workspaceId) {
+            setError("Please select or create a workspace before uploading documents.");
+            return;
+          }
+          if (!uploading && !streaming) {
+            fileInput.current?.click();
+          }
+        }}
+        onKeyDown={(event) => {
+          if ((event.key === "Enter" || event.key === " ") && !uploading && !streaming) {
+            event.preventDefault();
+            if (!workspaceId) {
+              setError("Please select or create a workspace before uploading documents.");
+              return;
+            }
+            fileInput.current?.click();
+          }
+        }}
         onDragOver={(event) => {
           event.preventDefault();
-          if (!uploading && !streaming) setDragging(true);
+          if (!uploading && !streaming && workspaceId) setDragging(true);
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={(event) => {
           event.preventDefault();
           setDragging(false);
+          if (!workspaceId) {
+            setError("Please select or create a workspace before uploading documents.");
+            return;
+          }
           void upload(event.dataTransfer.files);
         }}
       >
@@ -291,17 +322,21 @@ export function Documents() {
           <>
             <strong>Add material to your research</strong>
             <p>
-              Drag files into this space, or{" "}
+              Click or drag files into this area, or{" "}
               <button
+                type="button"
                 className="text-button"
                 disabled={!workspaceId || streaming}
-                onClick={() => fileInput.current?.click()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  fileInput.current?.click();
+                }}
               >
                 browse files
               </button>
             </p>
             <small>
-              PDF, DOCX, TXT, Markdown · up to {health?.max_upload_mb ?? 20} MB
+              PDF, DOCX, TXT, Markdown · up to {health?.max_upload_mb ?? 10} MB
               each
             </small>
           </>
@@ -421,7 +456,7 @@ export function Documents() {
           <p>
             {search
               ? "Try another filename."
-              : "Upload your first document to give Aether a place to start."}
+              : "Upload your first document to give Crebry a knowledge base to synthesize."}
           </p>
           <span>PDF, DOCX, text, and Markdown files</span>
         </div>

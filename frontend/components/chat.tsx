@@ -228,7 +228,7 @@ export function Chat() {
                 <div className="message-body">
                   <div className="message-heading">
                     <strong>
-                      {message.role === "assistant" ? "Aether" : "You"}
+                      {message.role === "assistant" ? "Crebry" : "You"}
                     </strong>
                     <span>
                       {message.role === "assistant" ? "Research answer" : ""}
@@ -306,7 +306,7 @@ export function Chat() {
                 </div>
                 <div className="message-body">
                   <div className="message-heading">
-                    <strong>Aether</strong>
+                    <strong>Crebry</strong>
                     <span className="stream-label">
                       <LoaderCircle size={11} className="spin" />{" "}
                       {activeNode ?? "Starting research"}

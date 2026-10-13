@@ -24,7 +24,7 @@ export default function Error({
           <RefreshCw size={14} /> Try again
         </Button>
         <Link className="button button-ghost" href="/">
-          <ArrowLeft size={14} /> Back to Aether
+          <ArrowLeft size={14} /> Back to Crebry
         </Link>
       </div>
     </main>

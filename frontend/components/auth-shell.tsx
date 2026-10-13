@@ -12,16 +12,16 @@ export function AuthShell({
   return (
     <main className="auth-page">
       <nav className="auth-nav" aria-label="Account navigation">
-        <Link href="/" aria-label="Aether Research Lab home">
+        <Link href="/" aria-label="Crebry — The Research Agent home">
           <Brand />
         </Link>
         <Link href="/">
-          <ArrowLeft size={14} /> Back to Aether
+          <ArrowLeft size={14} /> Back to Crebry
         </Link>
       </nav>
       <div className="auth-layout">
         <section className="auth-editorial">
-          <span className="eyebrow">Your personal research lab</span>
+          <span className="eyebrow">The Research Agent</span>
           <h1>
             {signingUp ? (
               <>

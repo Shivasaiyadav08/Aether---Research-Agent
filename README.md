@@ -1,6 +1,6 @@
-# Aether Research
+# Crebry — The Research Agent
 
-A personal research lab with Clerk sign-in, account-owned workspaces, local MiniLM
+A personal research workspace with Clerk sign-in, account-owned workspaces, local or Gemini
 embeddings, persistent Chroma, and a real LangGraph corrective RAG workflow.
 
 
@@ -153,9 +153,9 @@ npm ci
 npm run dev
 ```
 
-Open [Aether](http://localhost:3000), enter the research lab, sign up/sign in,
+Open [Crebry](http://localhost:3000), enter the research workspace, sign up/sign in,
 and create your first workspace. Upload `examples/research-notes.md`, select a
-free model, and ask “What chunk size and overlap does Aether use, and why?”
+free model, and ask “What chunk size and overlap does Crebry use, and why?”
 
 Restart after environment changes. For a production frontend preview, run
 `npm run build` and then `npm run start`; rebuild after changing public Clerk keys.
