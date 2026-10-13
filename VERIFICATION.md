@@ -178,3 +178,21 @@ automated mocked-availability test; a live outage cannot be made deterministic.
 No public deployment was performed. Authentication and ownership are implemented;
 large-scale quotas, abuse protection, backups and deployment infrastructure remain
 operational work before broad public exposure. See README.md for boundaries.
+
+## Gemini availability repair — 13 October 2026
+
+- Full backend suite: 102 passed. After final model-access diagnostics were added,
+  the targeted AI, model-catalog, graph, and API regression suite passed 68 tests.
+- Frontend: 21 tests passed; TypeScript, ESLint, and production build passed.
+- Backend Ruff and Git whitespace checks passed.
+- Regression coverage includes wrapped timeouts, HTTP authentication errors,
+  concurrent success/failure, incomplete responses, bounded retries, later-node
+  recovery, cooldown expiry, key replacement, and safe catalog error propagation.
+- Live local key: Models.list returned HTTP 200 with 63 entries. Pricing/catalog
+  intersection returned eight eligible text models. A tiny generation request to
+  Gemini 2.5 Flash-Lite returned 404, a raw Gemini 3.8 request returned a temporary
+  503, and a subsequent tiny request through the application's LangChain client
+  and repaired fallback code successfully generated text on Gemini 3.8 Flash.
+  No research documents or conversation contents were used in live checks.
+- The signed-in production session and production credentials were not inspected.
+  These changes remain local and require backend/frontend deployment to apply live.

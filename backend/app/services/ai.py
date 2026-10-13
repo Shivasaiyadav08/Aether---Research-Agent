@@ -1,4 +1,3 @@
-
 # ============================================================
 # AI SERVICE - AETHER PROJECT
 # ============================================================
@@ -26,7 +25,9 @@
 # json converts Python data into JSON and vice versa.
 # Example:
 # {"name": "Rahul"} -> '{"name": "Rahul"}'
+import asyncio
 import json
+import logging
 
 # urlparse breaks a website URL into different parts.
 # Example:
@@ -77,6 +78,7 @@ from pydantic import ValidationError
 # These values normally come from environment variables.
 from app.core.config import config
 
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -106,117 +108,73 @@ UNTRUSTED_RULE = (
 )
 
 
-
 # ============================================================
 # 3. FIND THE HTTP ERROR STATUS
 # ============================================================
 
-def service_status(error: Exception) -> int | None:
-    """
-    Find the HTTP status code from an AI/API error.
 
-    COMMON HTTP STATUS CODES:
-
-    400 = Bad request
-    401 = Invalid authentication
-    403 = Permission denied
-    404 = Model/resource not found
-    408 = Request timeout
-    429 = Rate limit or quota exceeded
-    500 = Server error
-    503 = Service unavailable
-
-    WHY IS THIS FUNCTION NEEDED?
-
-    LangChain may wrap the original Google API error
-    inside another exception.
-
-    This function searches through those errors
-    to find the actual status code.
-
-    Returns:
-        HTTP status code, or None if not found.
-    """
-
-    # Start with the error that was received.
-    current = error
-
-    # Store errors we have already inspected.
-    # This prevents an infinite loop.
-    seen = set()
-
-    # Keep checking while there is an error
-    # we have not inspected before.
+def error_chain(error: Exception):
+    """Inspect wrapped provider failures without looping through cyclic causes."""
+    current, seen = error, set()
     while current is not None and id(current) not in seen:
-
-        # Remember this error.
         seen.add(id(current))
-
-        # Try to find its HTTP status code.
-        #
-        # Different libraries may use:
-        # error.status_code
-        # or
-        # error.code
-        status = getattr(current, "status_code", None) or getattr(current, "code", None)
-
-        # If a numeric status was found, return it.
-        if isinstance(status, int):
-            return status
-
-        # If this error wraps another error,
-        # move to the original/underlying error.
+        yield current
         current = current.__cause__ or current.__context__
 
-    # No HTTP status code was found.
-    return None
 
+def service_status(error: Exception) -> int | None:
+    for current in error_chain(error):
+        status = getattr(current, "status_code", None) or getattr(current, "code", None)
+        if not isinstance(status, int):
+            status = getattr(getattr(current, "response", None), "status_code", None)
+        if isinstance(status, int):
+            return status
+    return None
 
 
 # ============================================================
 # 4. CONVERT API ERRORS INTO SAFE MESSAGES
 # ============================================================
 
+
 def safe_service_error(error: Exception) -> str:
-    """
-    Convert technical API errors into simple messages.
-
-    WHY?
-
-    Raw provider errors might contain sensitive details.
-
-    We don't want to show:
-    - Credentials
-    - Internal error responses
-    - Sensitive provider information
-
-    Instead, we return safe messages to the frontend.
-    """
-
-    # Get the HTTP error status.
+    """Return actionable diagnostics without exposing provider bodies or credentials."""
+    if isinstance(error, ModelFallbackExhausted):
+        return str(error)
     status = service_status(error)
-
-    # 401 = Invalid authentication
-    # 403 = Access denied
-    if status == 401 or status == 403:
-        return "Provider rejected the API key or this model. Check backend configuration and model access."
-
-    # 429 = Too many requests or quota exhausted.
+    if status == 401:
+        return "Provider rejected the backend API key (HTTP 401). Check the running backend's key and restart after changing it."
+    if status == 403:
+        return "Provider denied access (HTTP 403). Check API key restrictions, project permissions, and model access."
     if status == 429:
-        return "Gemini quota or rate limit reached. Wait for quota to reset or check the project's limits in AI Studio."
-
-    # Check whether the connection timed out.
-    if isinstance(error, (httpx.TimeoutException, TimeoutError)):
+        return "Gemini quota or rate limit reached (HTTP 429). Check the project's limits in AI Studio; changing keys within the same project does not reset quota."
+    if status == 404:
+        return "The requested model is unavailable to this key/project or API version (HTTP 404). Refresh the model list and choose another model."
+    if status in {408, 504} or any(
+        isinstance(e, (httpx.TimeoutException, TimeoutError)) for e in error_chain(error)
+    ):
         return "The external service timed out. Please try again."
-
-    # General fallback message for other errors.
+    if status is not None and status >= 500:
+        return f"The provider returned a temporary server error (HTTP {status}). Please try again shortly."
+    if any(isinstance(e, httpx.TransportError) for e in error_chain(error)):
+        return "Could not connect to the external service. Check the backend's network and try again."
+    if any(isinstance(e, IncompleteAnswer) for e in error_chain(error)):
+        return "Gemini returned an empty or incomplete answer. Try another model or a shorter response."
+    if any(isinstance(e, ContextOverflowError) for e in error_chain(error)):
+        return "The request exceeded the model's context limit. Reduce the supplied evidence or choose another model."
+    if status in {400, 422}:
+        return f"The provider rejected the request (HTTP {status}). Check the model parameters and API key configuration."
     return "External service failed. Check backend keys, model availability, network, and provider status."
 
+
+class ModelFallbackExhausted(RuntimeError):
+    """A safe summary that retains the last failure after candidates are exhausted."""
 
 
 # ============================================================
 # 5. CREATE A GEMINI AI MODEL
 # ============================================================
+
 
 def create_llm(model: str):
     """
@@ -235,11 +193,8 @@ def create_llm(model: str):
     # If no API key is configured,
     # we cannot communicate with Gemini.
     if not config.gemini_api_key:
-
         # Stop execution and explain the problem.
-        raise ValueError(
-            "Add GEMINI_API_KEY to backend/.env and restart the backend to ask questions."
-        )
+        raise ValueError("Add GEMINI_API_KEY to backend/.env and restart the backend to ask questions.")
 
     # Configure Gemini's internal thinking behavior.
     #
@@ -250,15 +205,11 @@ def create_llm(model: str):
         # Gemini 3 models:
         # Set thinking level to low.
         {"thinking_level": "low"}
-
         if model.startswith("gemini-3")
-
         # Gemini 2.5 non-Pro models:
         # Request zero thinking budget.
         else {"thinking_budget": 0}
-
         if model.startswith("gemini-2.5") and "pro" not in model
-
         # Other models:
         # Do not add a custom thinking setting.
         else {}
@@ -266,17 +217,13 @@ def create_llm(model: str):
 
     # Create and return a Gemini AI client.
     return ChatGoogleGenerativeAI(
-
         # Which Gemini model should be used?
         model=model,
-
         # Authentication key from backend configuration.
         api_key=config.gemini_api_key,
-
         # False means use the Gemini Developer API,
         # not Google Cloud Vertex AI.
         vertexai=False,
-
         # Temperature controls output randomness.
         #
         # Gemini 3 -> 1
@@ -285,23 +232,18 @@ def create_llm(model: str):
         # Lower values generally aim for
         # more consistent outputs.
         temperature=1 if model.startswith("gemini-3") else 0,
-
         # Stop waiting after the configured timeout.
         timeout=30,
-
         # Disable automatic retries within this client.
         #
         # Our project has its own model fallback logic.
         max_retries=0,
-
         # Maximum requested output tokens.
         # This is not the total context window.
         max_tokens=8192,
-
         # Do not include model thinking content
         # in returned messages.
         include_thoughts=False,
-
         # Add the thinking settings selected above.
         #
         # ** expands a Python dictionary into
@@ -310,74 +252,36 @@ def create_llm(model: str):
     )
 
 
-
 # ============================================================
 # 6. CHECK WHETHER THE MODEL IS UNAVAILABLE
 # ============================================================
 
+
 def is_model_unavailable(error: Exception) -> bool:
-    """
-    Decide whether an error allows trying another model.
-
-    Example:
-
-    Gemini Model A -> Quota exceeded
-             |
-             v
-    Gemini Model B -> Try instead
-
-    Returns:
-        True  = Another eligible model may be tried.
-        False = Do not automatically switch models.
-    """
-
-    # These HTTP errors are treated as
-    # model availability/capacity problems.
-    if service_status(error) in {404, 408, 429, 500, 502, 503, 504}:
+    # Invalid credentials and invalid requests must not trigger model hopping.
+    status = service_status(error)
+    if status == 400 and any(isinstance(e, ContextOverflowError) for e in error_chain(error)):
         return True
+    if status is not None:
+        return status in {404, 408, 429, 500, 502, 503, 504}
+    return any(
+        isinstance(e, (httpx.TransportError, TimeoutError, ContextOverflowError, IncompleteAnswer))
+        for e in error_chain(error)
+    )
 
-    # Check the error and its underlying causes.
-    current = error
 
-    while current is not None:
-
-        # Types of errors that can trigger fallback:
-        #
-        # TransportError:
-        # Network connection problems.
-        #
-        # TimeoutError:
-        # Request took too long.
-        #
-        # ContextOverflowError:
-        # Model could not handle the context size.
-        #
-        # IncompleteAnswer:
-        # Model returned an incomplete/empty answer,
-        # as classified elsewhere in the application.
-
-        if isinstance(
-            current,
-            (
-                httpx.TransportError,
-                TimeoutError,
-                ContextOverflowError,
-                IncompleteAnswer,
-            ),
-        ):
-            return True
-
-        # Check the original cause of the error.
-        current = current.__cause__
-
-    # The error is not classified as an availability issue.
-    return False
-
+def retryable_model_error(error: Exception) -> bool:
+    """Retry transient transport/server failures once; never retry quota/auth errors."""
+    status = service_status(error)
+    if status is not None:
+        return status in {408, 500, 502, 503, 504}
+    return any(isinstance(e, (httpx.TransportError, TimeoutError)) for e in error_chain(error))
 
 
 # ============================================================
 # 7. CUSTOM EXCEPTION FOR INCOMPLETE ANSWERS
 # ============================================================
+
 
 class IncompleteAnswer(Exception):
     """
@@ -399,10 +303,10 @@ class IncompleteAnswer(Exception):
     """
 
 
-
 # ============================================================
 # 8. EXTRACT TEXT FROM GEMINI RESPONSE
 # ============================================================
+
 
 def message_text(message) -> str:
     """
@@ -436,197 +340,103 @@ def message_text(message) -> str:
 
     # Otherwise, extract and combine text blocks.
     return "".join(
-
         # Get the "text" value from each block.
         # If the key is missing, use an empty string.
         block.get("text", "")
-
         for block in content
-
         # Only use dictionary blocks containing text.
         if isinstance(block, dict)
-
         # Ignore blocks that are not marked as text.
         and block.get("type") == "text"
-
         # Ignore blocks marked as thinking content.
         and not block.get("thought")
     )
-
 
 
 # ============================================================
 # 9. AUTOMATIC GEMINI MODEL FALLBACK
 # ============================================================
 
+
 async def call_with_free_fallback(plan: dict, operation, notify):
-    """
-    Try eligible Gemini models one by one if necessary.
+    """Bound retries per operation; keep only real model/quota failures on cooldown."""
+    from app.services.free_models import mark_model_available, mark_model_unavailable, model_availability
 
-    WHAT IS FALLBACK?
-
-    Suppose there are three eligible models:
-
-    Model A -> Rate limit reached
-    Model B -> Service unavailable
-    Model C -> Success
-
-    The application automatically tries Model C.
-
-    PARAMETERS:
-
-    plan:
-        Information about eligible models,
-        active model, and unavailable models.
-
-    operation:
-        An asynchronous function that performs
-        a request using a selected model.
-
-    notify:
-        A callback that reports model switches.
-
-    IMPORTANT:
-    This function only uses models already
-    included in the supplied plan.
-
-    It does not independently guarantee that
-    a model is free. Eligibility is decided
-    by the code that builds the plan.
-    """
-
-    # Import the function that temporarily records
-    # unavailable models.
-    from app.services.free_models import mark_model_unavailable
-
-    # Create a copy of eligible model names.
     models = list(plan["models"])
-
-    # Get the model that is currently active.
     active = plan.get("active")
-
-    # If the active model is eligible,
-    # move it to the beginning of the list.
-    #
-    # This lets us try the previously working
-    # model first.
     if active in models:
-        models = [active] + [
-            model for model in models if model != active
-        ]
-
-    # Store the latest error if all models fail.
+        models = [active] + [model for model in models if model != active]
     last_error = None
+    failures = plan.setdefault("failure_reasons", {})
+    # Transient failures are local to this call, not shared by concurrent graders
+    # or every later workflow node. Persistent failures expire with their cooldown.
+    for model in list(plan["unavailable"]):
+        if model in failures and model_availability(model)["available"]:
+            plan["unavailable"].remove(model)
+            failures.pop(model, None)
 
-    # Loop through available models.
-    for model in models:
-
-        # Skip a model already marked unavailable.
+    for index, model in enumerate(models):
         if model in plan["unavailable"]:
             continue
-
-        try:
-            # Execute the requested AI operation.
-            #
-            # await means:
-            # Wait for the asynchronous operation
-            # to finish without blocking the event loop.
-            result = await operation(model)
-
-            # If the model succeeded,
-            # save it as the active model.
-            if model not in plan["unavailable"]:
+        for attempt in range(2):
+            try:
+                result = await operation(model)
+                mark_model_available(model)
+                if model in plan["unavailable"]:
+                    plan["unavailable"].remove(model)
+                failures.pop(model, None)
                 plan["active"] = model
-
-            # Return the successful result.
-            # This stops the fallback loop.
-            return result
-
-        except Exception as error:
-
-            # If this error should NOT trigger fallback,
-            # immediately raise it.
-            #
-            # Example:
-            # Invalid API key -> Don't try another model.
-            if not is_model_unavailable(error):
-                raise
-
-            # Remember the error.
-            last_error = error
-
-            # Mark this model as unavailable.
-            if model not in plan["unavailable"]:
-
-                plan["unavailable"].append(model)
-
-                # Identify its HTTP status.
+                return result
+            except Exception as error:
+                if not is_model_unavailable(error):
+                    raise
+                last_error = error
                 status = service_status(error)
-
-                # Temporarily mark certain failures
-                # in the shared model availability tracker.
-                #
-                # Incomplete answers are skipped here.
-                # HTTP 400 is also excluded.
-                if status != 400 and not isinstance(error, IncompleteAnswer):
-
-                    # Rate limit -> 60 seconds
-                    # Other eligible errors -> 30 seconds
-                    #
-                    # The exact tracking behavior depends
-                    # on the implementation of
-                    # mark_model_unavailable().
-                    mark_model_unavailable(
+                reason = safe_service_error(error)
+                if attempt == 0 and retryable_model_error(error):
+                    logger.warning(
+                        "Gemini request retry model=%s status=%s error_type=%s reason=%s",
                         model,
-                        60 if status == 429 else 30
+                        status,
+                        type(error).__name__,
+                        reason,
                     )
-
-                # Find the remaining models
-                # that have not been marked unavailable.
-                alternatives = [
-                    item for item in models
-                    if item not in plan["unavailable"]
-                ]
-
-                # Create a simple reason for the failure.
-                reason = (
-                    "quota or rate limit reached"
-
-                    if status == 429
-
-                    else "model unavailable or response/token limit reached"
-                )
-
-                # Inform the caller that the model failed.
-                #
-                # Arguments:
-                # - Failed model
-                # - Next model, if one exists
-                # - Reason for switching
-                notify(
+                    await asyncio.sleep(0.5)
+                    continue
+                # A timeout, failed stream, or oversized response says nothing
+                # about whether this model can serve the next, different request.
+                if status in {404, 429}:
+                    if model not in plan["unavailable"]:
+                        plan["unavailable"].append(model)
+                    failures[model] = reason
+                    mark_model_unavailable(model, 60 if status == 429 else 300)
+                alternatives = [item for item in models[index + 1 :] if item not in plan["unavailable"]]
+                logger.warning(
+                    "Gemini request failed model=%s status=%s error_type=%s reason=%s",
                     model,
-                    alternatives[0] if alternatives else None,
-                    reason
+                    status,
+                    type(error).__name__,
+                    reason,
                 )
+                notify(model, alternatives[0] if alternatives else None, reason)
+                break
 
-    # If all eligible models fail,
-    # stop and raise an error.
-    raise RuntimeError(
-        "All eligible Gemini models are unavailable or out of quota. Wait for quota to reset and try again."
-    ) from last_error
-
+    reason = (
+        safe_service_error(last_error)
+        if last_error
+        else next(
+            iter(failures.values()), "All candidates are still in cooldown. Wait and refresh the model list."
+        )
+    )
+    raise ModelFallbackExhausted("No eligible Gemini model completed this request. " + reason) from last_error
 
 
 # ============================================================
 # 10. GET STRUCTURED JSON OUTPUT FROM GEMINI
 # ============================================================
 
-async def structured_call(
-    model: str,
-    schema,
-    instruction: str,
-    data: dict
-):
+
+async def structured_call(model: str, schema, instruction: str, data: dict):
     """
     Ask Gemini to return structured data.
 
@@ -658,13 +468,9 @@ async def structured_call(
 
     # Prepare messages sent to Gemini.
     messages = [
-
         # SystemMessage contains the application's
         # security rules and task instructions.
-        SystemMessage(
-            content=f"{UNTRUSTED_RULE}\n{instruction}"
-        ),
-
+        SystemMessage(content=f"{UNTRUSTED_RULE}\n{instruction}"),
         # HumanMessage contains input data.
         #
         # json.dumps converts the Python dictionary
@@ -673,9 +479,7 @@ async def structured_call(
         # ensure_ascii=False preserves characters
         # such as Hindi letters instead of
         # escaping them into Unicode sequences.
-        HumanMessage(
-            content=json.dumps(data, ensure_ascii=False)
-        ),
+        HumanMessage(content=json.dumps(data, ensure_ascii=False)),
     ]
 
     try:
@@ -684,13 +488,9 @@ async def structured_call(
         #
         # JSON Schema describes required fields,
         # data types and other constraints.
-        return await llm.with_structured_output(
-            schema,
-            method="json_schema"
-        ).ainvoke(messages)
+        return await llm.with_structured_output(schema, method="json_schema").ainvoke(messages)
 
     except Exception as error:
-
         # If the model is unavailable, let the error
         # propagate so the fallback system can handle it.
         if is_model_unavailable(error):
@@ -707,10 +507,7 @@ async def structured_call(
         # Python ValueError
         #
         # Other errors should not be hidden.
-        if status not in (400, 422) and not isinstance(
-            error,
-            (ValidationError, ValueError)
-        ):
+        if status not in (400, 422) and not isinstance(error, (ValidationError, ValueError)):
             raise
 
         # Some models may not support the preferred
@@ -742,11 +539,7 @@ async def structured_call(
         #
         # Remove those Markdown code fences.
         if content.startswith("```"):
-            content = content.split(
-                "\n", 1
-            )[1].rsplit(
-                "```", 1
-            )[0].strip()
+            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
         # Convert JSON into a Pydantic object
         # and validate it against the required schema.
@@ -756,10 +549,10 @@ async def structured_call(
         return schema.model_validate_json(content)
 
 
-
 # ============================================================
 # 11. BASIC URL VALIDATION
 # ============================================================
+
 
 def safe_url(value: str) -> str | None:
     """
@@ -792,19 +585,13 @@ def safe_url(value: str) -> str | None:
     # 1. Scheme is HTTP or HTTPS.
     # 2. A network location exists.
     # 3. No username is included in the URL.
-    return (
-        value
-        if parsed.scheme in {"http", "https"}
-        and parsed.netloc
-        and not parsed.username
-        else None
-    )
-
+    return value if parsed.scheme in {"http", "https"} and parsed.netloc and not parsed.username else None
 
 
 # ============================================================
 # 12. SEARCH THE WEB USING TAVILY
 # ============================================================
+
 
 async def search_web(query: str) -> list[dict]:
     """
@@ -831,11 +618,8 @@ async def search_web(query: str) -> list[dict]:
 
     # Check whether Tavily API key is configured.
     if not config.tavily_api_key:
-
         # Without an API key, web search cannot run.
-        raise ValueError(
-            "Web fallback is unavailable: add TAVILY_API_KEY to backend/.env."
-        )
+        raise ValueError("Web fallback is unavailable: add TAVILY_API_KEY to backend/.env.")
 
     # Create an asynchronous HTTP client.
     #
@@ -844,28 +628,20 @@ async def search_web(query: str) -> list[dict]:
     #
     # 'async with' automatically closes the client.
     async with httpx.AsyncClient(timeout=30) as client:
-
         # Send a POST request to Tavily's search API.
         response = await client.post(
-
             # Tavily API endpoint.
             "https://api.tavily.com/search",
-
             # JSON request body.
             json={
-
                 # Authenticate using Tavily API key.
                 "api_key": config.tavily_api_key,
-
                 # Search query given by the application.
                 "query": query,
-
                 # Ask for up to 5 results.
                 "max_results": 5,
-
                 # Use basic search depth.
                 "search_depth": "basic",
-
                 # Do not request Tavily's generated answer.
                 #
                 # We only want the search sources here.
@@ -896,7 +672,6 @@ async def search_web(query: str) -> list[dict]:
 
     # Examine each search result.
     for result in results:
-
         # Extract its URL and validate the format.
         url = safe_url(result.get("url", ""))
 
@@ -923,19 +698,15 @@ async def search_web(query: str) -> list[dict]:
                 # These IDs can be used later
                 # when generating citations.
                 "id": f"W{len(sources) + 1}",
-
                 # Identify this source as web content.
                 "kind": "web",
-
                 # Original website address.
                 "url": url,
-
                 # Website/page title.
                 #
                 # If title is missing,
                 # use the URL instead.
                 "name": result.get("title", url),
-
                 # Store at most the first 4000 characters
                 # of the search result's content.
                 #

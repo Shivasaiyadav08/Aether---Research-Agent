@@ -1,4 +1,8 @@
 import { create } from "zustand";
+import {
+  advanceModelCooldowns,
+  setModelCooldowns,
+} from "../lib/model-availability";
 import type {
   Conversation,
   Health,
@@ -38,6 +42,7 @@ type ResearchState = {
   ) => void;
   newChat: () => void;
   receiveEvent: (event: WorkflowEvent) => void;
+  tickModelCooldowns: () => void;
 };
 
 export const useResearch = create<ResearchState>((set) => ({
@@ -63,7 +68,14 @@ export const useResearch = create<ResearchState>((set) => ({
   warnings: [],
   selectedSource: null,
   elapsedMs: 0,
-  update: (patch) => set(patch),
+  update: (patch) =>
+    set(
+      patch.models
+        ? { ...patch, models: setModelCooldowns(patch.models) }
+        : patch,
+    ),
+  tickModelCooldowns: () =>
+    set((state) => ({ models: advanceModelCooldowns(state.models) })),
   newChat: () =>
     set({
       view: "research",
@@ -85,7 +97,13 @@ export const useResearch = create<ResearchState>((set) => ({
       if (event.type === "model_fallback" && event.failed_model)
         patch.models = state.models.map((model) =>
           model.id === event.failed_model
-            ? { ...model, available: false }
+            ? setModelCooldowns([
+                {
+                  ...model,
+                  available: event.available ?? false,
+                  retry_after_seconds: event.retry_after_seconds ?? 60,
+                },
+              ])[0]
             : model,
         );
       if (

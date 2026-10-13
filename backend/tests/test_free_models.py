@@ -6,7 +6,13 @@ from google.genai.errors import ClientError
 
 from app.core.config import config
 from app.services import free_models
-from app.services.ai import call_with_free_fallback, is_model_unavailable, service_status
+from app.services.ai import (
+    IncompleteAnswer,
+    call_with_free_fallback,
+    is_model_unavailable,
+    safe_service_error,
+    service_status,
+)
 
 
 def pricing_section(model, input_price="Free of charge", output_price="Free of charge"):
@@ -147,10 +153,14 @@ async def test_unavailable_or_quota_exhausted_models_fall_back_and_notify(code):
         await call_with_free_fallback(plan, operation, lambda *notice: notices.append(notice))
         == "grounded result"
     )
-    assert calls == ["gemini-first", "gemini-second"]
+    assert calls == (
+        ["gemini-first", "gemini-first", "gemini-second"]
+        if code == 503
+        else ["gemini-first", "gemini-second"]
+    )
     assert notices[0][:2] == ("gemini-first", "gemini-second")
     assert plan["active"] == "gemini-second"
-    assert free_models._cooldowns["gemini-first"] > 0
+    assert ("gemini-first" in free_models._cooldowns) is (code != 503)
 
 
 @pytest.mark.parametrize("code", [400, 401, 403])
@@ -176,7 +186,7 @@ async def test_exhausted_fallback_is_bounded_and_skips_previous_failures():
         raise wrapped_error(429)
 
     plan = {"models": ["gemini-old", "gemini-one", "gemini-two"], "unavailable": ["gemini-old"]}
-    with pytest.raises(RuntimeError, match="out of quota"):
+    with pytest.raises(RuntimeError, match="quota"):
         await call_with_free_fallback(plan, operation, lambda *notice: notices.append(notice))
     assert calls == ["gemini-one", "gemini-two"]
     assert notices[-1][1] is None
@@ -186,3 +196,100 @@ def test_wrapped_google_status_is_recognized():
     error = wrapped_error(429)
     assert service_status(error) == 429
     assert is_model_unavailable(error)
+
+
+def test_httpx_authentication_error_is_reported_without_credentials():
+    response = httpx.Response(401, request=httpx.Request("GET", "https://example.org"))
+    error = httpx.HTTPStatusError("secret-key-and-provider-body", request=response.request, response=response)
+    assert service_status(error) == 401
+    assert not is_model_unavailable(error)
+    assert "HTTP 401" in safe_service_error(error)
+    assert "secret" not in safe_service_error(error)
+
+
+def test_wrapped_timeout_preserves_the_actual_failure():
+    original = httpx.ReadTimeout("private provider details")
+    error = RuntimeError("wrapper")
+    error.__cause__ = original
+    assert is_model_unavailable(error)
+    assert "timed out" in safe_service_error(error)
+
+
+async def test_transient_failure_retries_then_can_serve_the_next_workflow_step():
+    calls, notices = [], []
+    plan = {"models": ["gemini-only"], "unavailable": []}
+
+    async def failing(model):
+        calls.append(model)
+        raise TimeoutError("private network details")
+
+    with pytest.raises(RuntimeError, match="timed out") as caught:
+        await call_with_free_fallback(plan, failing, lambda *notice: notices.append(notice))
+    assert calls == ["gemini-only", "gemini-only"]
+    assert plan["unavailable"] == []
+    assert free_models.model_availability("gemini-only")["available"]
+    assert "timed out" in safe_service_error(caught.value)
+    assert "private" not in safe_service_error(caught.value)
+
+    async def succeeding(model):
+        return "next request works"
+
+    assert await call_with_free_fallback(plan, succeeding, lambda *_: None) == "next request works"
+
+
+async def test_incomplete_answer_does_not_disable_a_model_for_other_requests():
+    plan = {"models": ["gemini-only"], "unavailable": []}
+
+    async def incomplete(model):
+        raise IncompleteAnswer("empty answer")
+
+    with pytest.raises(RuntimeError, match="incomplete answer"):
+        await call_with_free_fallback(plan, incomplete, lambda *_: None)
+    assert plan["unavailable"] == []
+    assert free_models.model_availability("gemini-only")["available"]
+
+
+async def test_concurrent_success_is_not_poisoned_by_another_request_failure():
+    started, failed = asyncio.Event(), asyncio.Event()
+    plan = {"models": ["gemini-only"], "unavailable": []}
+
+    async def succeeds(model):
+        started.set()
+        await failed.wait()
+        return "graded correctly"
+
+    async def fails(model):
+        await started.wait()
+        raise IncompleteAnswer("empty")
+
+    success = asyncio.create_task(call_with_free_fallback(plan, succeeds, lambda *_: None))
+    with pytest.raises(RuntimeError):
+        await call_with_free_fallback(plan, fails, lambda *_: None)
+    failed.set()
+    assert await success == "graded correctly"
+    assert plan["active"] == "gemini-only"
+    assert plan["unavailable"] == []
+
+
+async def test_quota_failure_remains_actionable_in_later_workflow_steps():
+    plan = {"models": ["gemini-only"], "unavailable": []}
+    calls = []
+
+    async def failing(model):
+        calls.append(model)
+        raise wrapped_error(429)
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="HTTP 429"):
+            await call_with_free_fallback(plan, failing, lambda *_: None)
+    assert calls == ["gemini-only"]
+
+
+def test_cooldowns_expire_and_do_not_follow_a_replacement_key(monkeypatch):
+    monkeypatch.setattr(config, "gemini_api_key", "old-test-key")
+    free_models.mark_model_unavailable("gemini-only", 60)
+    assert not free_models.model_availability("gemini-only")["available"]
+    monkeypatch.setattr(config, "gemini_api_key", "new-test-key")
+    assert free_models.model_availability("gemini-only")["available"]
+    free_models.mark_model_unavailable("gemini-only", -1)
+    assert free_models.model_availability("gemini-only")["available"]

@@ -24,6 +24,15 @@ _expires = 0.0
 _catalog_key = ""
 _catalog_lock = asyncio.Lock()
 _cooldowns: dict[str, float] = {}
+_cooldown_key = ""
+
+
+def reset_key_cooldowns():
+    """Failures for one credential must not disable models for a replacement key."""
+    global _cooldown_key
+    if _cooldown_key != config.gemini_api_key:
+        _cooldowns.clear()
+        _cooldown_key = config.gemini_api_key
 
 
 def free_tier_ids(html: str) -> set[str]:
@@ -89,19 +98,23 @@ def model_rank(item: dict):
 
 
 def mark_model_unavailable(model: str, seconds: int = 60):
+    reset_key_cooldowns()
     _cooldowns[model] = monotonic() + seconds
 
 
+def mark_model_available(model: str):
+    reset_key_cooldowns()
+    _cooldowns.pop(model, None)
+
+
+def model_availability(model: str) -> dict:
+    reset_key_cooldowns()
+    remaining = max(0, int(_cooldowns.get(model, 0) - monotonic() + 0.999))
+    return {"available": remaining == 0, "retry_after_seconds": remaining}
+
+
 def availability(models: list[dict]) -> list[dict]:
-    now = monotonic()
-    return [
-        {
-            **item,
-            "available": _cooldowns.get(item["id"], 0) <= now,
-            "retry_after_seconds": max(0, int(_cooldowns.get(item["id"], 0) - now + 0.999)),
-        }
-        for item in models
-    ]
+    return [{**item, **model_availability(item["id"])} for item in models]
 
 
 async def get_free_models(*, refresh: bool = False) -> list[dict]:

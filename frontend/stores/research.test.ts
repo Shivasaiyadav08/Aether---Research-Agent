@@ -54,6 +54,30 @@ it("replaces provisional text after a generation or provider retry", () => {
     .receiveEvent({ type: "token", text: "A cited replacement [D1]." });
   expect(useResearch.getState().draft).toBe("A cited replacement [D1].");
 });
+it("keeps a model selectable after an incomplete response without a provider cooldown", () => {
+  useResearch.getState().update({
+    models: [
+      {
+        id: "gemini-first",
+        name: "Gemini",
+        context_length: 1000,
+        pricing: {},
+        supported_parameters: [],
+        available: true,
+      },
+    ],
+  });
+  useResearch.getState().receiveEvent({
+    type: "model_fallback",
+    failed_model: "gemini-first",
+    model: null,
+    available: true,
+    retry_after_seconds: 0,
+    message: "Empty answer. No eligible fallback remains.",
+  });
+  expect(useResearch.getState().models[0].available).toBe(true);
+  expect(useResearch.getState().models[0].retry_at).toBeUndefined();
+});
 it("clears private data when resetting the signed-in session", () => {
   useResearch.getState().update({
     sessionId: "user_alice",

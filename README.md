@@ -22,7 +22,7 @@ embeddings, persistent Chroma, and a real LangGraph corrective RAG workflow.
 - Up to three chunks are graded concurrently. Citation prompting includes an
   explicit format example; citation and grounding checks remain enabled.
 - If the chosen model is unavailable, a real event explains the switch to a free
-  fallback. Each eligible candidate is tried at most once; no paid-only model is used.
+  fallback. Candidates have bounded attempts; no paid-only model is used.
 
 ## Features
 
@@ -200,16 +200,26 @@ sources. If pricing or access cannot be verified, chat fails closed.
 
 The chosen model is first. Other candidates prefer newer model families, then Pro,
 Flash, and Lite within a family, then stable versions. This is an explicit quality
-heuristic, not a measured benchmark. Every verified candidate is tried at most once.
+heuristic, not a measured benchmark. A candidate gets at most one extra attempt
+per operation for a transient transport/server failure.
 A stale Gemini choice is visibly replaced by a currently verified candidate.
 
 The API does not report remaining quota. Real 429 errors trigger fallback and a
-60-second cooldown; unavailable models and transport errors use a 30-second cooldown.
-The selector shows recently failed models as unavailable until refresh after the
-cooldown. Invalid keys and invalid requests do not trigger model hopping. A partial
-failed answer is reset before a replacement streams; empty or output-token-limited
-answers are not accepted. If all candidates fail, the UI gets a clear error.
+60-second cooldown; 404 model-access failures use a five-minute cooldown. The
+selector counts down and re-enables models automatically when cooldowns expire.
+Transport and temporary server failures get one retry per candidate; they do not
+disable models for unrelated requests or later workflow steps. Empty and truncated
+answers trigger fallback without marking the model globally unavailable. Cooldowns
+are scoped to the backend's current key. Invalid keys and invalid requests do not
+trigger model hopping. A partial failed answer is reset before a replacement
+streams. If candidates are exhausted, the UI and sanitized backend logs retain the
+last failure's category and HTTP status rather than reporting a generic quota error.
 Changing models cannot bypass shared project quotas, daily limits, or account restrictions.
+
+A model appearing in Models.list and having published free pricing does not prove
+that generation is enabled for the current project. Google currently limits Gemini
+2.5 access to projects that previously used those models; new projects should use
+current Gemini 3 models. See [Google's model access notes](https://ai.google.dev/gemini-api/docs/deprecations).
 
 All grading, sufficiency checks, rewriting, generation, and grounding validation use
 `ChatGoogleGenerativeAI` through Google's Gemini Developer API (`vertexai=False`).

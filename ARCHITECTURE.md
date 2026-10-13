@@ -38,7 +38,8 @@ workspace. Legacy rows with null ownership remain hidden until explicitly claime
 
 The API intersects Google's published free Standard input/output prices with the
 key's accessible text-generating Gemini models. A chat gets the chosen model and
-all other verified candidates, each attempted at most once per operation. Node calls use
+all other verified candidates, with one extra attempt per operation for transient
+transport/server failures. Node calls use
 `call_with_free_fallback`; actual switches emit `model_fallback`. The request's
 plan is shared among its grading tasks, never across users or conversations.
 
@@ -109,7 +110,11 @@ The test suite overrides identity only within test fixtures.
 
 The backend intersects Google's live free-tier pricing with authenticated Models.list
 pages. Only text-generating Gemini IDs enter the request plan. The chosen model
-comes first, followed by ranked alternatives. Real quota/unavailability failures
-produce SSE notices and cooldowns; a failed partial stream resets before replacement.
+comes first, followed by ranked alternatives. Quota failures get a 60-second
+cooldown; missing/inaccessible models get five minutes. Transport failures, server
+errors, and incomplete responses do not disable a model for subsequent operations.
+SSE fallback notices include actual availability and cooldown duration. The picker
+counts down and re-enables models automatically; a failed partial stream resets
+before retry or replacement. Exhaustion preserves a safe last-failure reason.
 There is no remaining-quota or billing-tier endpoint in Models.list. A free-tier
 project with billing disabled is required to avoid billed usage.

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RefreshCw, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { useResearch } from "@/stores/research";
@@ -9,6 +9,15 @@ export function FreeModelPicker() {
   const { models, selectedModel, streaming, modelNotice, update } =
     useResearch();
   const [loading, setLoading] = useState(false);
+  const hasCooldowns = models.some((model) => model.available === false);
+  useEffect(() => {
+    if (!hasCooldowns) return;
+    const timer = window.setInterval(
+      () => useResearch.getState().tickModelCooldowns(),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [hasCooldowns]);
   async function refresh() {
     const sessionId = useResearch.getState().sessionId;
     setLoading(true);
@@ -65,7 +74,7 @@ export function FreeModelPicker() {
           >
             {model.name} ·{" "}
             {model.available === false
-              ? `Unavailable / quota · retry in ${model.retry_after_seconds || 60}s`
+              ? `Cooldown · retry in ${model.retry_after_seconds ?? 60}s`
               : "Free tier"}
           </option>
         ))}

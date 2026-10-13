@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 from pathlib import Path
 import tempfile
 from time import perf_counter
@@ -30,6 +31,7 @@ from app.services.free_models import get_free_models
 from app.services.documents import extract_text, index_document, upload_document
 
 router = APIRouter(prefix="/api", dependencies=[Depends(authorize_request)])
+logger = logging.getLogger(__name__)
 
 
 class WorkspaceInput(BaseModel):
@@ -334,7 +336,7 @@ async def list_models(refresh: bool = False):
     except Exception as error:
         raise HTTPException(
             503,
-            "Could not load free-tier Gemini models. Check GEMINI_API_KEY, network access, and AI Studio model access.",
+            "Could not load free-tier Gemini models. " + safe_service_error(error),
         ) from error
 
 
@@ -412,13 +414,15 @@ async def resolve_chat_models(data: ChatInput, request: Request):
     try:
         catalog = await get_free_models()
     except Exception as error:
-        raise HTTPException(503, "Could not verify free models. Please try again shortly.") from error
+        raise HTTPException(503, "Could not verify free models. " + safe_service_error(error)) from error
     by_id = {item["id"] for item in catalog}
     available = [item for item in catalog if item.get("available", True)]
     if not available:
+        retry_after = min(item.get("retry_after_seconds", 60) for item in catalog)
         raise HTTPException(
             503,
-            "All eligible Gemini models are temporarily unavailable or out of quota. Wait and refresh the model list.",
+            "All eligible Gemini models are in cooldown after model-access or quota failures. "
+            f"Retry in {max(1, retry_after)}s and refresh the model list.",
         )
     notice = None
     if data.model not in by_id:
@@ -567,6 +571,7 @@ def chat_stream(data: ChatInput, request: Request, selection: dict = Depends(res
         except Exception as error:
             status = "failed"
             error_text = safe_service_error(error)
+            logger.error("Research run failed run_id=%s error_type=%s reason=%s", run_id, type(error).__name__, error_text)
             trace.append({"type": "error", "message": error_text})
             yield sse({"type": "error", "message": error_text, "run_id": run_id})
         finally:

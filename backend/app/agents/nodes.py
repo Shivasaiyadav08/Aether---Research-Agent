@@ -18,6 +18,7 @@ from app.services.ai import (
     search_web,
     structured_call,
 )
+from app.services.free_models import model_availability
 
 # sends progress events to teh frontend
 def emit(event_type: str, **payload):
@@ -51,6 +52,7 @@ def make_nodes(vectors):
             "model_fallback",
             failed_model=failed,
             model=replacement,
+            **model_availability(failed),
             message=f"{failed}: {reason}. "
             + (
                 f"Switching to free-tier Gemini model {replacement}."

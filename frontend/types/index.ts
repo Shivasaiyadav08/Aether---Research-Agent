@@ -55,6 +55,7 @@ export type Model = {
   free_tier_eligible?: boolean;
   available?: boolean;
   retry_after_seconds?: number;
+  retry_at?: number;
 };
 export type Health = {
   status: string;
@@ -86,6 +87,8 @@ export type WorkflowEvent = {
   status?: string;
   model?: string | null;
   failed_model?: string;
+  available?: boolean;
+  retry_after_seconds?: number;
 };
 export type WorkflowRun = {
   id: string;

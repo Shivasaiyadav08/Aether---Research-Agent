@@ -1,4 +1,5 @@
 import json
+import httpx
 import pytest
 
 from app.core.config import config
@@ -88,6 +89,25 @@ def test_all_gemini_models_in_cooldown_returns_actionable_error(client, workspac
     response = client.post("/api/chat/stream", json={"workspace_id": workspace, "question": "Stars?"})
     assert response.status_code == 503
     assert "quota" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 429, 503])
+def test_catalog_errors_keep_status_without_exposing_credentials(client, workspace, monkeypatch, status):
+    monkeypatch.setattr(config, "gemini_api_key", "test-only")
+
+    async def failing(refresh=False):
+        request = httpx.Request("GET", "https://example.org")
+        response = httpx.Response(status, request=request)
+        raise httpx.HTTPStatusError("private-api-key-and-provider-body", request=request, response=response)
+
+    monkeypatch.setattr("app.api.routes.get_free_models", failing)
+    for response in (
+        client.get("/api/models?refresh=true"),
+        client.post("/api/chat/stream", json={"workspace_id": workspace, "question": "Stars?"}),
+    ):
+        assert response.status_code == 503
+        assert f"HTTP {status}" in response.json()["detail"]
+        assert "private-api-key" not in response.text
 
 
 def test_upload_duplicate_preview_reindex_delete(client, workspace):
