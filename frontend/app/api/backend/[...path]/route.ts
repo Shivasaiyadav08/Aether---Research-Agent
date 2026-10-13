@@ -90,14 +90,34 @@ async function forward(
       status: response.status,
       headers: resultHeaders,
     });
-  } catch {
+
+  } catch (error) {
+    console.error("[backend-proxy] Upstream fetch failed", {
+      url,
+      method: request.method,
+      error:
+        error instanceof Error
+          ? {
+              name: error.name,
+              message: error.message,
+              cause:
+                error.cause instanceof Error
+                  ? error.cause.message
+                  : String(error.cause ?? ""),
+            }
+          : String(error),
+    });
+
     return Response.json(
       {
-        detail: "Cannot reach the research backend. Please try again shortly.",
+        detail: "Cannot reach the research backend.",
+        diagnostic:
+          error instanceof Error ? error.message : String(error),
       },
       { status: 502 },
     );
   }
+
 }
 export const GET = forward;
 export const POST = forward;
