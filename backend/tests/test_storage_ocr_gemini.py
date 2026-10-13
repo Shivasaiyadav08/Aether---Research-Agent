@@ -1,4 +1,4 @@
-﻿import numpy as np
+import numpy as np
 import pymupdf
 
 from app.core.config import config
@@ -164,6 +164,77 @@ def test_gemini_ocr_for_scanned_pdf(tmp_path, monkeypatch):
     assert len(segments) == 1
     assert segments[0]["page"] == 1
     assert "Invoice 98765 Total Due: 150.00 USD" in segments[0]["text"]
+
+
+def test_gemini_ocr_list_content_blocks(tmp_path, monkeypatch):
+    """Gemini vision models sometimes return content as a list of dicts.
+    Ensure ocr_page_image() extracts plain text from content blocks correctly."""
+    monkeypatch.setattr(config, "gemini_ocr_enabled", True)
+    monkeypatch.setattr(config, "gemini_api_key", "fake-key")
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=300, height=300)
+    page.draw_rect(pymupdf.Rect(10, 10, 290, 290), color=(0, 0, 0), fill=(1, 1, 1))
+    pdf_path = tmp_path / "scanned_blocks.pdf"
+    doc.save(str(pdf_path))
+    doc.close()
+
+    class MockListContentResponse:
+        content = [
+            {"type": "text", "text": "Hello scanned world", "extras": {"signature": "abc"}},
+        ]
+
+    class MockLLM:
+        def invoke(self, messages):
+            return MockListContentResponse()
+
+    monkeypatch.setattr("app.services.ai.create_llm", lambda model: MockLLM())
+
+    segments = extract_text(pdf_path, ".pdf")
+    assert len(segments) == 1
+    assert "Hello scanned world" in segments[0]["text"]
+
+
+def test_gemini_ocr_model_fallback(tmp_path, monkeypatch):
+    """When the primary OCR model fails, the function should try fallback models."""
+    monkeypatch.setattr(config, "gemini_ocr_enabled", True)
+    monkeypatch.setattr(config, "gemini_api_key", "fake-key")
+    monkeypatch.setattr(config, "gemini_ocr_model", "gemini-bad-model")
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=300, height=300)
+    page.draw_rect(pymupdf.Rect(10, 10, 290, 290), color=(0, 0, 0), fill=(1, 1, 1))
+    pdf_path = tmp_path / "scanned_fallback.pdf"
+    doc.save(str(pdf_path))
+    doc.close()
+
+    calls = []
+
+    class GoodResponse:
+        content = "Fallback OCR text"
+
+    class BadLLM:
+        def invoke(self, messages):
+            raise RuntimeError("Model unavailable")
+
+    class GoodLLM:
+        def invoke(self, messages):
+            return GoodResponse()
+
+    def mock_create_llm(model):
+        calls.append(model)
+        if model == "gemini-bad-model":
+            return BadLLM()
+        return GoodLLM()
+
+    monkeypatch.setattr("app.services.ai.create_llm", mock_create_llm)
+
+    segments = extract_text(pdf_path, ".pdf")
+    # Primary model should have been tried and failed; a fallback should have succeeded
+    assert "gemini-bad-model" in calls
+    assert len(calls) >= 2
+    assert len(segments) == 1
+    assert "Fallback OCR text" in segments[0]["text"]
 
 
 def test_health_reports_providers(client):

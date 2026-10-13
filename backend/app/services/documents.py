@@ -35,40 +35,77 @@ def clean_text(text: str) -> str:
 
 
 def ocr_page_image(page) -> str:
-    """Render a scanned PDF page to JPEG and transcribe using Gemini Vision."""
+    """Render a scanned PDF page to JPEG and transcribe using Gemini Vision.
+
+    Tries models in fallback order and handles both plain-string and
+    list-of-dicts response content (newer Gemini models return content blocks).
+    """
+    logger = logging.getLogger("aether.documents")
     try:
         pix = page.get_pixmap(dpi=150)
         jpeg_bytes = pix.tobytes("jpeg")
         del pix
         b64 = base64.b64encode(jpeg_bytes).decode("ascii")
         del jpeg_bytes
-
-        from langchain_core.messages import HumanMessage
-        from app.services.ai import create_llm
-
-        llm = create_llm(config.gemini_ocr_model)
-        msg = HumanMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": (
-                        "Transcribe all readable text from this scanned document page accurately. "
-                        "Preserve original paragraph structure. "
-                        "Return ONLY the transcribed text without conversational commentary or markdown code blocks."
-                    ),
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                },
-            ]
-        )
-        response = llm.invoke([msg])
-        del b64
-        return clean_text(getattr(response, "content", "") or "")
     except Exception as exc:
-        logging.getLogger("aether.documents").warning("Gemini OCR failed for page: %s", exc)
+        logger.warning("OCR: failed to render page to image: %s", exc)
         return ""
+
+    from langchain_core.messages import HumanMessage
+    from app.services.ai import create_llm
+
+    prompt_msg = HumanMessage(
+        content=[
+            {
+                "type": "text",
+                "text": (
+                    "Transcribe all readable text from this scanned document page accurately. "
+                    "Preserve original paragraph structure. "
+                    "Return ONLY the transcribed text without conversational commentary or markdown code blocks."
+                ),
+            },
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+            },
+        ]
+    )
+
+    # Try the configured model first, then known-good fallbacks
+    fallback_models = [
+        config.gemini_ocr_model,
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+    ]
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    ocr_models = [m for m in fallback_models if not (m in seen or seen.add(m))]  # type: ignore[func-returns-value]
+
+    for model_name in ocr_models:
+        try:
+            llm = create_llm(model_name)
+            response = llm.invoke([prompt_msg])
+            raw = getattr(response, "content", "") or ""
+            # Gemini may return a list of content blocks instead of a plain string
+            if isinstance(raw, list):
+                text = " ".join(
+                    item.get("text", "") if isinstance(item, dict) else str(item)
+                    for item in raw
+                )
+            else:
+                text = raw
+            text = clean_text(text)
+            if text:
+                if model_name != config.gemini_ocr_model:
+                    logger.info("OCR succeeded with fallback model %s", model_name)
+                return text
+        except Exception as exc:
+            logger.warning("OCR model %s failed: %s — trying next", model_name, exc)
+            continue
+
+    logger.error("OCR: all Gemini models exhausted; returning empty string for page")
+    return ""
 
 
 def extract_text(source: bytes | Path | str, extension: str) -> list[dict]: 

@@ -75,7 +75,7 @@ class Config(BaseSettings):
     embedding_provider: str = Field(default="auto", pattern=r"^(auto|local|gemini)$")
     # Gemini Cloud OCR for scanned PDFs (uses existing GEMINI_API_KEY)
     gemini_ocr_enabled: bool = Field(default=True)
-    gemini_ocr_model: str = "gemini-2.5-flash"
+    gemini_ocr_model: str = "gemini-2.0-flash"
 
 
 config = Config()
