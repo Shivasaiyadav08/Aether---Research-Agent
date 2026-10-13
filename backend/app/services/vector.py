@@ -21,6 +21,14 @@ class VectorStore:
         self.model = embedder
         self.lock = RLock()
 
+    @property
+    def is_gemini_active(self) -> bool:
+        if config.embedding_provider == "gemini":
+            return bool(config.gemini_api_key)
+        if config.embedding_provider == "auto":
+            return bool(config.gemini_api_key)
+        return False
+
     def _get_model(self):
         """Thread-safe singleton lazy loader for the embedding model."""
         global _SHARED_EMBEDDER
@@ -33,13 +41,14 @@ class VectorStore:
                 self.model = _SHARED_EMBEDDER
                 return self.model
 
-            if config.embedding_provider == "gemini":
+            if self.is_gemini_active:
                 log_stage_memory("before_model_load", provider="gemini")
                 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
                 loaded = GoogleGenerativeAIEmbeddings(
-                    model="models/text-embedding-004",
+                    model="models/gemini-embedding-001",
                     google_api_key=config.gemini_api_key,
+                    output_dimensionality=768,
                 )
                 _SHARED_EMBEDDER = loaded
                 self.model = loaded
@@ -89,8 +98,9 @@ class VectorStore:
         return model.encode(texts, normalize_embeddings=True)
 
     def collection(self, workspace_id):
+        tag = "gemini" if self.is_gemini_active else "local"
         return self.client.get_or_create_collection(
-            name=f"ws_{workspace_id}", configuration={"hnsw": {"space": "cosine"}}, embedding_function=None
+            name=f"ws_{workspace_id}_{tag}", configuration={"hnsw": {"space": "cosine"}}, embedding_function=None
         )
 
     def index(self, workspace_id, document_id, name, chunks, version):
@@ -159,10 +169,11 @@ class VectorStore:
 
     def delete_workspace(self, workspace_id):
         with self.lock:
-            try:
-                self.client.delete_collection(f"ws_{workspace_id}")
-            except Exception:
-                pass
+            for suffix in ["", "_local", "_gemini"]:
+                try:
+                    self.client.delete_collection(f"ws_{workspace_id}{suffix}")
+                except Exception:
+                    pass
 
 
 # 1. User uploads PDF

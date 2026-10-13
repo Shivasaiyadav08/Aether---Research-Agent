@@ -70,8 +70,9 @@ class Config(BaseSettings):
     r2_access_key_id: str = ""
     r2_secret_access_key: str = ""
     r2_bucket_name: str = ""
-    # Embedding provider: "local" (MiniLM, ~420 MB) or "gemini" (~150 MB)
-    embedding_provider: str = Field(default="local", pattern=r"^(local|gemini)$")
+    # Embedding provider: "auto" (uses Gemini when GEMINI_API_KEY is set or on Render, else local),
+    # or explicitly "gemini" (~110 MB RAM, recommended for Render 512 MB) or "local" (~420 MB RAM)
+    embedding_provider: str = Field(default="auto", pattern=r"^(auto|local|gemini)$")
     # Gemini Cloud OCR for scanned PDFs (uses existing GEMINI_API_KEY)
     gemini_ocr_enabled: bool = Field(default=True)
     gemini_ocr_model: str = "gemini-2.5-flash"

@@ -63,6 +63,9 @@ def configure_process_memory_environment() -> None:
     os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
     os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+    os.environ.setdefault("WEB_CONCURRENCY", "1")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
     # Limit glibc malloc arenas on Linux containers (glibc defaults to 8 * CPU cores)
     os.environ.setdefault("MALLOC_ARENA_MAX", "2")
 

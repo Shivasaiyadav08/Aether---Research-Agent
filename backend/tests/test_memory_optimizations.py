@@ -42,6 +42,7 @@ def test_embedding_model_singleton_and_thread_safe_lazy_loading(tmp_path, monkey
 
     # Reset shared singleton for test
     vector_module._SHARED_EMBEDDER = None
+    monkeypatch.setattr(config, "embedding_provider", "local")
 
     class MockST:
         init_count = 0

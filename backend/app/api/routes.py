@@ -92,7 +92,7 @@ def health(request: Request):
         "gemini_configured": bool(config.gemini_api_key),
         "tavily_configured": bool(config.tavily_api_key),
         "embedding_model": config.embedding_model,
-        "embedding_provider": config.embedding_provider,
+        "embedding_provider": "gemini" if getattr(request.app.state.vectors, "is_gemini_active", False) else "local",
         "embeddings_loaded": request.app.state.vectors.model is not None,
         "storage_provider": "r2" if bool(config.r2_account_id and config.r2_bucket_name) else "local",
         "ocr_enabled": config.gemini_ocr_enabled and bool(config.gemini_api_key),

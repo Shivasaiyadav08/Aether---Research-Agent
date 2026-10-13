@@ -7,6 +7,7 @@ from app.services.vector import VectorStore
 
 
 def main():
+    config.embedding_provider = "local"
     config.data_dir.mkdir(parents=True, exist_ok=True)
     store = VectorStore(config.data_dir, config.embedding_model)
     workspace = f"smoke_{uuid4().hex}"
