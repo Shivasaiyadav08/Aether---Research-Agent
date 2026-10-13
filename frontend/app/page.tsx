@@ -7,6 +7,8 @@ import {
   FileText,
   Globe2,
   Layers3,
+  ScanEye,
+  Sparkles,
 } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { ResearchPreview } from "@/components/research-preview";
@@ -69,18 +71,21 @@ export default function Page() {
       <section className="landing-hero" id="main">
         <div className="hero-copy">
           <div className="hero-kicker">
-            <span className="tiny-rule" /> Autonomous research agent
+            <span className="tiny-rule" />
+            <span className="kicker-pulse-dot" />
+            Autonomous research agent
           </div>
-          <h1>
+          <h1 className="hero-motion-title">
             Research
             <br />
-            with clarity<span>.</span>
+            <span className="motion-gradient-text">with clarity</span>
+            <span className="hero-period">.</span>
           </h1>
-          <p>
+          <p className="hero-motion-p">
             Explore questions, synthesize complex sources, and turn information into
             evidence-backed answers — all in one focused workspace.
           </p>
-          <div className="landing-actions">
+          <div className="landing-actions hero-motion-actions">
             <Link className="landing-cta" href="/research">
               Start researching <ArrowUpRight size={17} />
             </Link>
@@ -88,54 +93,66 @@ export default function Page() {
               Explore Crebry <ArrowRight size={16} />
             </a>
           </div>
-          <div className="hero-footnote">
+          <div className="hero-footnote hero-motion-footnote">
             <BookOpen size={14} /> Your documents. The wider web. Evidence you
             can inspect.
           </div>
         </div>
-        <div className="hero-notebook">
-          <div className="notebook-top">
-            <span>From a question to understanding</span>
-            <span>01 / 03</span>
+        <div className="hero-notebook-wrapper">
+          <div className="hero-ambient-glow" aria-hidden="true" />
+          <div className="hero-floating-badge badge-top" aria-hidden="true">
+            <span className="badge-pulse-dot" />
+            <Sparkles size={13} />
+            <span>Corrective RAG</span>
           </div>
-          <h2>
-            Good questions deserve
-            <br />
-            more than quick answers.
-          </h2>
-          <p>
-            Bring your sources together. Follow the reasoning. Find what
-            matters.
-          </p>
-          <div className="notebook-source">
-            <FileText size={18} />
-            <div>
-              <strong>Your knowledge</strong>
-              <span>Documents, notes, and ideas</span>
+          <div className="hero-floating-badge badge-bottom" aria-hidden="true">
+            <ScanEye size={13} />
+            <span>Gemini Vision OCR</span>
+          </div>
+          <div className="hero-notebook">
+            <div className="notebook-top">
+              <span>From a question to understanding</span>
+              <span>01 / 03</span>
             </div>
-            <span className="notebook-index">01</span>
-          </div>
-          <div className="notebook-source">
-            <Globe2 size={18} />
-            <div>
-              <strong>A wider perspective</strong>
-              <span>Web research when you need it</span>
+            <h2>
+              Good questions deserve
+              <br />
+              more than quick answers.
+            </h2>
+            <p>
+              Bring your sources together. Follow the reasoning. Find what
+              matters.
+            </p>
+            <div className="notebook-source">
+              <FileText size={18} />
+              <div>
+                <strong>Your knowledge</strong>
+                <span>Documents, notes, and ideas</span>
+              </div>
+              <span className="notebook-index">01</span>
             </div>
-            <span className="notebook-index">02</span>
-          </div>
-          <div className="notebook-source">
-            <BookOpen size={18} />
-            <div>
-              <strong>A traceable answer</strong>
-              <span>Sources behind the understanding</span>
+            <div className="notebook-source">
+              <Globe2 size={18} />
+              <div>
+                <strong>A wider perspective</strong>
+                <span>Web research when you need it</span>
+              </div>
+              <span className="notebook-index">02</span>
             </div>
-            <span className="notebook-index">03</span>
-          </div>
-          <div className="notebook-bottom">
-            Crebry — The Research Agent{" "}
-            <span>
-              Built around the evidence <ArrowUpRight size={13} />
-            </span>
+            <div className="notebook-source">
+              <BookOpen size={18} />
+              <div>
+                <strong>A traceable answer</strong>
+                <span>Sources behind the understanding</span>
+              </div>
+              <span className="notebook-index">03</span>
+            </div>
+            <div className="notebook-bottom">
+              Crebry — The Research Agent{" "}
+              <span>
+                Built around the evidence <ArrowUpRight size={13} />
+              </span>
+            </div>
           </div>
         </div>
       </section>
