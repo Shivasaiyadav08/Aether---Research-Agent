@@ -245,3 +245,37 @@ def test_health_reports_providers(client):
     assert "storage_provider" in data
     assert "ocr_enabled" in data
     assert data["storage_provider"] == "local"
+
+
+def test_docx_image_ocr(tmp_path, monkeypatch):
+    """When a DOCX has no paragraph text but has embedded scanned images,
+    it should extract the images and perform Gemini OCR."""
+    import io
+    from docx import Document
+
+    monkeypatch.setattr(config, "gemini_ocr_enabled", True)
+    monkeypatch.setattr(config, "gemini_api_key", "fake-key")
+
+    pdf_doc = pymupdf.open()
+    page = pdf_doc.new_page(width=100, height=100)
+    page.draw_rect(pymupdf.Rect(10, 10, 90, 90), color=(0, 0, 0), fill=(0.8, 0.8, 0.8))
+    jpeg_bytes = page.get_pixmap().tobytes("jpeg")
+    pdf_doc.close()
+
+    docx_doc = Document()
+    docx_doc.add_picture(io.BytesIO(jpeg_bytes))
+    docx_path = tmp_path / "scanned_invoice.docx"
+    docx_doc.save(str(docx_path))
+
+    class MockOCRResponse:
+        content = "Transcribed invoice text from docx image"
+
+    class MockLLM:
+        def invoke(self, messages):
+            return MockOCRResponse()
+
+    monkeypatch.setattr("app.services.ai.create_llm", lambda model: MockLLM())
+
+    segments = extract_text(docx_path, ".docx")
+    assert len(segments) == 1
+    assert "Transcribed invoice text from docx image" in segments[0]["text"]

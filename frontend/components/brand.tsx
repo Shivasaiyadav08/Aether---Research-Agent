@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 export function BrandMark({ className }: { className?: string }) {
   return (
     <svg
-      className={cn("crebry-mark", className)}
+      className={cn("crebry-mark aether-mark", className)}
       width="28"
       height="28"
       viewBox="0 0 28 28"

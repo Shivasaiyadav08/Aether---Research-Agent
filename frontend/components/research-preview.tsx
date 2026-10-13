@@ -44,12 +44,12 @@ export function ResearchPreview() {
   return (
     <div
       className="product-preview"
-      aria-label="Interactive example of the Aether workspace"
+      aria-label="Interactive example of the Crebry workspace"
     >
       <aside className="preview-sidebar">
         <div className="preview-brand">
           <BrandMark />
-          <strong>aether</strong>
+          <strong>Crebry</strong>
         </div>
         <div className="preview-workspace">
           <FolderOpen size={14} /> Literature review <ChevronRight size={12} />
@@ -99,7 +99,7 @@ export function ResearchPreview() {
               </div>
               <div className="preview-answer-label">
                 <BrandMark />
-                <strong>Aether</strong>
+                <strong>Crebry</strong>
                 <span>
                   <Check size={12} /> Evidence reviewed
                 </span>

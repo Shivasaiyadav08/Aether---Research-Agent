@@ -34,21 +34,13 @@ def clean_text(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+", " ", text)).strip()
 
 
-def ocr_page_image(page) -> str:
-    """Render a scanned PDF page to JPEG and transcribe using Gemini Vision.
-
-    Tries models in fallback order and handles both plain-string and
-    list-of-dicts response content (newer Gemini models return content blocks).
-    """
+def ocr_image_bytes(image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+    """Transcribe readable text from image bytes using Gemini Vision with model fallbacks."""
     logger = logging.getLogger("aether.documents")
     try:
-        pix = page.get_pixmap(dpi=150)
-        jpeg_bytes = pix.tobytes("jpeg")
-        del pix
-        b64 = base64.b64encode(jpeg_bytes).decode("ascii")
-        del jpeg_bytes
+        b64 = base64.b64encode(image_bytes).decode("ascii")
     except Exception as exc:
-        logger.warning("OCR: failed to render page to image: %s", exc)
+        logger.warning("OCR: failed to base64 encode image: %s", exc)
         return ""
 
     from langchain_core.messages import HumanMessage
@@ -59,14 +51,14 @@ def ocr_page_image(page) -> str:
             {
                 "type": "text",
                 "text": (
-                    "Transcribe all readable text from this scanned document page accurately. "
+                    "Transcribe all readable text from this scanned document or image accurately. "
                     "Preserve original paragraph structure. "
                     "Return ONLY the transcribed text without conversational commentary or markdown code blocks."
                 ),
             },
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                "image_url": {"url": f"data:{mime_type};base64,{b64}"},
             },
         ]
     )
@@ -78,7 +70,6 @@ def ocr_page_image(page) -> str:
         "gemini-1.5-flash",
         "gemini-1.5-flash-8b",
     ]
-    # Deduplicate while preserving order
     seen: set[str] = set()
     ocr_models = [m for m in fallback_models if not (m in seen or seen.add(m))]  # type: ignore[func-returns-value]
 
@@ -104,8 +95,21 @@ def ocr_page_image(page) -> str:
             logger.warning("OCR model %s failed: %s — trying next", model_name, exc)
             continue
 
-    logger.error("OCR: all Gemini models exhausted; returning empty string for page")
+    logger.error("OCR: all Gemini models exhausted; returning empty string")
     return ""
+
+
+def ocr_page_image(page) -> str:
+    """Render a scanned PDF page to JPEG and transcribe using Gemini Vision."""
+    logger = logging.getLogger("aether.documents")
+    try:
+        pix = page.get_pixmap(dpi=150)
+        jpeg_bytes = pix.tobytes("jpeg")
+        del pix
+        return ocr_image_bytes(jpeg_bytes, mime_type="image/jpeg")
+    except Exception as exc:
+        logger.warning("OCR: failed to render page to image: %s", exc)
+        return ""
 
 
 def extract_text(source: bytes | Path | str, extension: str) -> list[dict]: 
@@ -150,6 +154,24 @@ def extract_text(source: bytes | Path | str, extension: str) -> list[dict]:
                 " | ".join(cell.text for cell in row.cells) for table in doc.tables for row in table.rows
             ]
             cleaned = clean_text("\n\n".join(paragraphs))
+
+            # If no direct text was found, inspect embedded images (e.g. scanned documents pasted into Word)
+            if not cleaned and config.gemini_ocr_enabled and config.gemini_api_key:
+                image_texts = []
+                for rel in doc.part.rels.values():
+                    if "image" in getattr(rel, "reltype", ""):
+                        try:
+                            image_part = rel.target_part
+                            img_bytes = image_part.blob
+                            img_mime = getattr(image_part, "content_type", "") or "image/jpeg"
+                            img_text = ocr_image_bytes(img_bytes, mime_type=img_mime)
+                            if img_text:
+                                image_texts.append(img_text)
+                        except Exception as exc:
+                            logging.getLogger("aether.documents").warning("OCR failed for docx image: %s", exc)
+                if image_texts:
+                    cleaned = clean_text("\n\n".join(image_texts))
+
             if cleaned:
                 if len(cleaned) > max_chars:
                     raise ValueError(
@@ -181,7 +203,20 @@ def extract_text(source: bytes | Path | str, extension: str) -> list[dict]:
         raise ValueError("This file is damaged or its contents do not match its extension.") from error
 
     if not segments:
-        raise ValueError("No readable text found. Scanned PDFs need OCR before upload.")
+        if extension == ".pdf":
+            if not (config.gemini_ocr_enabled and config.gemini_api_key):
+                raise ValueError(
+                    "No readable text found in this PDF. If this is a scanned document, ensure GEMINI_API_KEY is configured in backend environment for automatic OCR."
+                )
+            raise ValueError(
+                "No readable text found in this PDF. Please ensure the document is not blank and pages are clearly legible."
+            )
+        elif extension == ".docx":
+            raise ValueError(
+                "No readable text found in this Word document. Please ensure the file contains readable text or clear images."
+            )
+        else:
+            raise ValueError(f"No readable text found in this {extension[1:].upper()} file.")
 
     return segments
 
