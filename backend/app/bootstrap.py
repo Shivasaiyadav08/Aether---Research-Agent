@@ -6,6 +6,9 @@ from app.core.memory import configure_process_memory_environment
 
 def main():
     configure_process_memory_environment()
+    # Report configuration mistakes before loading numerical/AI libraries.
+    from app.core.readiness import check_production_configuration
+    check_production_configuration()
     import uvicorn
     port = int(os.getenv("PORT", "8000"))
     if not 1 <= port <= 65535:

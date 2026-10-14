@@ -15,7 +15,7 @@ from app.models.database import AppSettings, ResearchJob, WorkflowRun, create_da
 from app.services.vector import VectorStore
 from app.services.routing import RoutingStore
 from app.services.jobs import JobManager
-from app.core.readiness import check_production_configuration
+from app.core.readiness import check_production_configuration, prepare_supabase_scratch_directory
 from app.services.documents import configure_ocr_router
 
 configure_process_memory_environment()
@@ -24,6 +24,7 @@ configure_process_memory_environment()
 @asynccontextmanager
 async def lifespan(app):
     check_production_configuration()
+    prepare_supabase_scratch_directory()
     use_supabase = config.vector_provider == "supabase"
     engine, db_factory = create_database(config.data_dir, config.database_url or None, schema="crebry" if use_supabase else None)
     app.state.db = db_factory

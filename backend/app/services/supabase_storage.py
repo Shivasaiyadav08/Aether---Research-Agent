@@ -1,11 +1,15 @@
 """Private Supabase Storage over REST; credentials never reach the browser."""
 from pathlib import Path
+import logging
 from time import monotonic
 from urllib.parse import quote
 
 import httpx
 
 from app.core.config import config
+
+logger = logging.getLogger("aether.storage")
+_bucket_limit_bytes = None
 
 
 def request(method, path, *, timeout=60, **kwargs):
@@ -61,6 +65,8 @@ def object_path(workspace_id, document_id):
 
 
 def check_bucket():
+    global _bucket_limit_bytes
+    _bucket_limit_bytes = None
     try:
         details = request("GET", f"bucket/{bucket()}", timeout=10).json()
     except FileNotFoundError:
@@ -68,11 +74,28 @@ def check_bucket():
     if details.get("public") is not False:
         raise RuntimeError("SUPABASE_STORAGE_BUCKET must be private to protect user documents.")
     limit = details.get("file_size_limit")
-    if limit is not None and int(limit) < config.max_upload_mb * 1024 * 1024:
-        raise RuntimeError("Supabase bucket file-size limit is below MAX_UPLOAD_MB. Update the bucket limit or MAX_UPLOAD_MB.")
+    if limit is not None:
+        try:
+            _bucket_limit_bytes = int(limit)
+        except (TypeError, ValueError):
+            raise RuntimeError("Supabase returned an invalid bucket file-size limit.") from None
+        if _bucket_limit_bytes < 0:
+            raise RuntimeError("Supabase returned an invalid bucket file-size limit.")
+        configured = config.max_upload_mb * 1024 * 1024
+        if _bucket_limit_bytes < configured:
+            logger.warning("Supabase upload limit is %d bytes; reducing the configured %d-byte limit. Backend startup continues.",
+                           _bucket_limit_bytes, configured)
+
+
+def upload_limit_bytes():
+    configured = config.max_upload_mb * 1024 * 1024
+    return configured if _bucket_limit_bytes is None else min(configured, _bucket_limit_bytes)
 
 
 def upload_file(workspace_id, document_id, content_or_path):
+    size = Path(content_or_path).stat().st_size if isinstance(content_or_path, (str, Path)) else len(content_or_path)
+    if size > upload_limit_bytes():
+        raise ValueError("The document exceeds the effective Supabase upload limit.")
     data = Path(content_or_path).read_bytes() if isinstance(content_or_path, (str, Path)) else content_or_path
     path = quote(object_path(workspace_id, document_id), safe="/")
     request("POST", f"object/{bucket()}/{path}", content=data,

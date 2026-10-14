@@ -15,6 +15,7 @@ from app.services.postgres_vector import PostgresVectorStore, vector_literal
 
 @pytest.fixture
 def supabase_config(monkeypatch):
+    monkeypatch.setattr(supabase_storage, "_bucket_limit_bytes", None)
     fields = {
         "environment": "production", "vector_provider": "supabase", "storage_provider": "supabase",
         "database_url": "postgresql+psycopg://test:test@pooler.example:5432/postgres",
@@ -24,6 +25,7 @@ def supabase_config(monkeypatch):
         "clerk_issuer": "https://example.clerk.accounts.dev", "clerk_secret_key": "test-only",
         "frontend_origin": "https://research.example", "clerk_authorized_parties": "https://research.example",
         "persistent_data_root": None,
+        "max_upload_mb": 10,
     }
     for field, value in fields.items():
         monkeypatch.setattr(config, field, value)
@@ -163,6 +165,93 @@ def test_missing_bucket_gives_setup_instruction(supabase_config, monkeypatch):
         supabase_storage.check_bucket()
 
 
+@pytest.mark.parametrize("limit", [5_000_000, 10_485_760, 20_000_000, None, 0])
+def test_smaller_bucket_limits_do_not_crash_startup(supabase_config, monkeypatch, limit):
+    mock_http(monkeypatch, lambda _: httpx.Response(200, json={"public": False, "file_size_limit": limit}))
+    supabase_storage.check_bucket()
+    expected = 10_485_760 if limit is None else min(10_485_760, limit)
+    assert storage.max_upload_bytes() == expected
+    assert storage.max_upload_mb() * 1024 * 1024 <= expected
+
+
+def test_effective_bucket_limit_rejects_before_upload(supabase_config, monkeypatch):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"public": False, "file_size_limit": 5})
+
+    mock_http(monkeypatch, handler)
+    supabase_storage.check_bucket()
+    with pytest.raises(ValueError, match="effective"):
+        storage.upload_file("ws", "doc", b"six!!!")
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("url", [
+    "postgresql://postgres.project:abc@1@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres",
+    "postgresql://postgres.project:@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres",
+    "postgresql://",
+])
+def test_malformed_database_urls_are_rejected_without_echoing_password(supabase_config, monkeypatch, url):
+    monkeypatch.setattr(config, "database_url", url)
+    with pytest.raises(RuntimeError, match="DATABASE_URL") as error:
+        check_production_configuration()
+    assert "abc" not in str(error.value)
+    assert "aws-0-ap-southeast-2" not in str(error.value)
+
+
+def test_database_url_is_not_a_storage_secret_and_errors_are_aggregated(supabase_config, monkeypatch):
+    monkeypatch.setattr(config, "supabase_secret_key", "postgresql://user:private-password@host/db")
+    monkeypatch.setattr(config, "clerk_issuer", "")
+    monkeypatch.setattr(config, "frontend_origin", "http://localhost:3000")
+    with pytest.raises(RuntimeError) as error:
+        check_production_configuration()
+    assert all(field in str(error.value) for field in ("SUPABASE_SECRET_KEY", "CLERK_ISSUER", "FRONTEND_ORIGIN"))
+    assert "private-password" not in str(error.value)
+
+
+def test_docker_bootstrap_checks_config_before_loading_server(supabase_config, monkeypatch):
+    import sys
+    from app.bootstrap import main
+    server = MagicMock()
+    monkeypatch.setitem(sys.modules, "uvicorn", server)
+    monkeypatch.setattr(config, "supabase_secret_key", "postgresql://user:private@host/db")
+    with pytest.raises(RuntimeError, match="SUPABASE_SECRET_KEY"):
+        main()
+    server.run.assert_not_called()
+
+
+def test_different_supabase_projects_are_detected(supabase_config, monkeypatch):
+    monkeypatch.setattr(config, "database_url", "postgresql://postgres.other:secret@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres")
+    with pytest.raises(RuntimeError, match="different Supabase projects"):
+        check_production_configuration()
+
+
+def test_unwritable_scratch_falls_back_without_changing_user_storage(supabase_config, monkeypatch, tmp_path):
+    from app.core.readiness import prepare_supabase_scratch_directory
+    blocker = tmp_path / "read-only-location"
+    blocker.write_bytes(b"existing file preserved")
+    scratch = tmp_path / "private-scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(config, "data_dir", blocker)
+    monkeypatch.setattr("app.core.readiness.tempfile.mkdtemp", lambda **_: str(scratch))
+    original_database = config.database_url
+    prepare_supabase_scratch_directory()
+    assert config.data_dir == scratch
+    assert config.database_url == original_database
+    assert blocker.read_bytes() == b"existing file preserved"
+
+
+def test_health_and_upload_api_use_effective_limit(client, workspace, monkeypatch):
+    monkeypatch.setattr(config, "storage_provider", "supabase")
+    monkeypatch.setattr(supabase_storage, "_bucket_limit_bytes", 1000)
+    assert client.get("/api/health").json()["max_upload_mb"] == 0
+    result = client.post(f"/api/workspaces/{workspace}/documents", files={"files": ("oversize.txt", b"x" * 1001, "text/plain")})
+    assert result.status_code == 201
+    assert "effective" in result.json()[0]["error"]
+
+
 @pytest.mark.parametrize("details", [{"code": "NoSuchBucket"}, {"error": "Bucket not found", "statusCode": "404"}])
 def test_legacy_http_400_missing_bucket_gives_setup_instruction(supabase_config, monkeypatch, details):
     mock_http(monkeypatch, lambda _: httpx.Response(400, json=details))
@@ -212,6 +301,7 @@ def test_postgres_startup_checks_private_schema_and_denies_browser_roles(tmp_pat
     statements = [call.args[0] for call in connection.exec_driver_sql.call_args_list]
     assert any('ALTER TABLE "crebry"."workspaces" ENABLE ROW LEVEL SECURITY' in sql for sql in statements)
     assert any('REVOKE ALL ON TABLE "crebry"."documents" FROM PUBLIC, anon, authenticated' in sql for sql in statements)
+    assert connection.exec_driver_sql.call_args.kwargs["execution_options"] == {"no_parameters": True}
     dbapi_connection = MagicMock()
     listeners[0](dbapi_connection, None)
     dbapi_connection.cursor.return_value.__enter__.return_value.execute.assert_called_once_with(

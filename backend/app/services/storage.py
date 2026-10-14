@@ -118,6 +118,18 @@ def provider() -> str:
     return "r2" if _r2_configured() else "local"
 
 
+def max_upload_bytes() -> int:
+    if provider() == "supabase":
+        from app.services.supabase_storage import upload_limit_bytes
+        return upload_limit_bytes()
+    return config.max_upload_mb * 1024 * 1024
+
+
+def max_upload_mb() -> float:
+    # Round down for the frontend so it never promises more than Storage allows.
+    return (max_upload_bytes() * 100 // (1024 * 1024)) / 100
+
+
 def _r2_endpoint() -> str:
     return f"https://{config.r2_account_id}.r2.cloudflarestorage.com"
 

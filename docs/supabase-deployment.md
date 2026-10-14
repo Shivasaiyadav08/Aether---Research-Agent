@@ -62,6 +62,19 @@ bucket, and refuses to silently use a local database or file fallback in this mo
 It uses TLS, a small connection pool, and disables prepared statements. Embedding
 generation is lazy; Chroma is not initialized in Supabase mode.
 
+Static configuration checks run before heavy imports and report all detected
+mistakes together without printing secrets. A malformed or unencoded database
+password, PostgreSQL URL used as a Storage key, anon/publishable key, quoted
+bucket name, mismatched projects and wrong pooler mode receive specific errors.
+In Supabase mode, an unwritable `DATA_DIR` falls back to a private temporary
+scratch directory; PostgreSQL, vectors and originals remain in Supabase.
+
+The effective upload limit is the smaller of `MAX_UPLOAD_MB` and the bucket's
+byte limit. A smaller bucket limit is a warning, not a startup failure. The API
+enforces it and `/api/health` exposes the effective limit for the frontend. You
+do not need to increase Storage limits just to get the backend running. A
+missing bucket, invalid credentials or a public bucket still fails safely.
+
 ## Verify and preserve existing data
 
 - Check `/api/health`: `status=ok`, `vector_provider=supabase`,
@@ -91,8 +104,10 @@ and does not include automatic backups. Render Free still sleeps on inactivity.
 Exact cosine search preserves recall for small datasets; it does not yet have an
 approximate vector index. No claim of unlimited capacity or production SLA is made.
 
-77 focused local tests passed, covering configuration, mocked private Storage
-REST/auth/errors and vector operations, and existing API ownership/document behavior.
+102 focused local tests passed after the deployment fixes, covering configuration,
+mocked private Storage REST/auth/errors and vector operations, and existing API
+ownership/document/research-job behavior. Smaller bucket limits, malformed URLs,
+secret-key confusion, combined diagnostics and scratch fallback have regressions.
 Ruff and whitespace checks passed. Hosted Supabase
 connectivity and an actual redeploy require the project credentials configured by
 the operator; no live migration or deployment was executed by this task.

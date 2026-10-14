@@ -354,10 +354,15 @@ def create_database(data_dir, database_url=None, *, schema=None):
         # Defense in depth if this private schema is ever exposed through PostgREST.
         # Backend table owners bypass RLS; browser roles receive no policies/grants.
         with engine.begin() as connection:
+            statements = []
             for table in Base.metadata.sorted_tables:
                 quoted = engine.dialect.identifier_preparer.quote_identifier(table.name)
-                connection.exec_driver_sql(f'ALTER TABLE "crebry".{quoted} ENABLE ROW LEVEL SECURITY')
-                connection.exec_driver_sql(f'REVOKE ALL ON TABLE "crebry".{quoted} FROM PUBLIC, anon, authenticated')
+                statements.extend([
+                    f'ALTER TABLE "crebry".{quoted} ENABLE ROW LEVEL SECURITY',
+                    f'REVOKE ALL ON TABLE "crebry".{quoted} FROM PUBLIC, anon, authenticated',
+                ])
+            # One network round trip, with driver preparation disabled above.
+            connection.exec_driver_sql("; ".join(statements), execution_options={"no_parameters": True})
 
     # Create a factory for opening database sessions.
     # A session is used to query, insert, update, and delete records.

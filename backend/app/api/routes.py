@@ -109,7 +109,7 @@ def health(request: Request):
         "storage_provider": storage.provider(),
         "vector_provider": config.vector_provider,
         "ocr_enabled": config.gemini_ocr_enabled and bool(config.gemini_api_key),
-        "max_upload_mb": config.max_upload_mb,
+        "max_upload_mb": storage.max_upload_mb(),
         "single_user": False,
         "authentication": "clerk",
         "clerk_configured": bool(config.clerk_secret_key or config.clerk_jwt_key),
@@ -201,7 +201,7 @@ def upload_documents(workspace_id: str, request: Request, files: list[UploadFile
         require_record(db, Workspace, workspace_id)
         temp_dir = config.data_dir / ".tmp"
         temp_dir.mkdir(parents=True, exist_ok=True)
-        max_bytes = config.max_upload_mb * 1024 * 1024
+        max_bytes = storage.max_upload_bytes()
 
         for file in files:
             temp_path = None
@@ -215,7 +215,7 @@ def upload_documents(workspace_id: str, request: Request, files: list[UploadFile
                     while chunk := file.file.read(65536):
                         total_size += len(chunk)
                         if total_size > max_bytes:
-                            raise ValueError(f"File exceeds {config.max_upload_mb} MB.")
+                            raise ValueError(f"File exceeds the effective {storage.max_upload_mb():g} MB upload limit.")
                         hasher.update(chunk)
                         temp_file.write(chunk)
 
