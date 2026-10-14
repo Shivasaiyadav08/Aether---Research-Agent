@@ -163,6 +163,22 @@ def test_missing_bucket_gives_setup_instruction(supabase_config, monkeypatch):
         supabase_storage.check_bucket()
 
 
+@pytest.mark.parametrize("details", [{"code": "NoSuchBucket"}, {"error": "Bucket not found", "statusCode": "404"}])
+def test_legacy_http_400_missing_bucket_gives_setup_instruction(supabase_config, monkeypatch, details):
+    mock_http(monkeypatch, lambda _: httpx.Response(400, json=details))
+    with pytest.raises(RuntimeError, match="setup.sql"):
+        supabase_storage.check_bucket()
+
+
+@pytest.mark.parametrize("code,match", [("InvalidJWT", "backend credential"), ("AccessDenied", "backend key"),
+                                       ("InvalidBucketName", "without quotes")])
+def test_storage_error_hints_never_echo_provider_messages(supabase_config, monkeypatch, code, match):
+    mock_http(monkeypatch, lambda _: httpx.Response(400, json={"code": code, "message": "credential=secret-value"}))
+    with pytest.raises(RuntimeError, match=match) as error:
+        supabase_storage.check_bucket()
+    assert "secret-value" not in str(error.value)
+
+
 @pytest.mark.parametrize("schema_exists", [True, False])
 def test_postgres_startup_checks_private_schema_and_denies_browser_roles(tmp_path, monkeypatch, schema_exists):
     engine = MagicMock()

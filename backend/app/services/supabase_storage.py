@@ -27,10 +27,25 @@ def request(method, path, *, timeout=60, **kwargs):
             details = {}
         if not isinstance(details, dict):
             details = {}
+        code = details.get("code") or details.get("error")
+        missing = code in {"NoSuchBucket", "NoSuchKey", "not_found", "Bucket not found", "Object not found"}
         if method == "GET" and (response.status_code == 404 or
-                (response.status_code == 400 and details.get("error") == "not_found")):
+                (response.status_code == 400 and missing)):
             raise FileNotFoundError("The original document is unavailable in Supabase Storage.")
-        raise RuntimeError(f"Supabase Storage returned HTTP {response.status_code}. Check bucket, backend secret key and storage quota.")
+        # Only fixed diagnostics are emitted: never reflect provider messages,
+        # invalid credential values, URLs, or arbitrary error codes into logs.
+        hints = {
+            "InvalidJWT": "The backend credential is invalid or expired. Copy the Supabase backend secret key from the same project as SUPABASE_URL.",
+            "Invalid API key": "The API key is invalid. Copy the backend secret key from the same Supabase project as SUPABASE_URL.",
+            "Unauthorized": "Storage rejected the backend credential. Use a secret or legacy service_role key, not anon or the database password.",
+            "unauthorized": "Storage rejected the backend credential. Use a secret or legacy service_role key, not anon or the database password.",
+            "AccessDenied": "The backend key cannot access Storage. Verify it is a secret or legacy service_role key from this project.",
+            "InvalidBucketName": "SUPABASE_STORAGE_BUCKET must be the exact bucket name without quotes, spaces or a URL.",
+            "TenantNotFound": "Supabase Storage is not provisioned for this project. Check the project URL and Storage status.",
+            "EntityTooLarge": "The upload exceeds the Supabase bucket file-size limit.",
+        }
+        hint = hints.get(code, "Check SUPABASE_URL, the backend secret key and the private bucket in the same project.")
+        raise RuntimeError(f"Supabase Storage returned HTTP {response.status_code}. {hint}")
     return response
 
 
