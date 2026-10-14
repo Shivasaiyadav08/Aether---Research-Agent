@@ -15,7 +15,7 @@ See [the current reliability report](docs/reliability-report.md). Full local bac
   request forwarding, stale history refresh isolation, and missing-session refusal.
 - TypeScript, ESLint, and the final Next.js production build pass. Tests/builds
   required host execution because of Windows sandbox temporary-file/path access.
-- README, LEARNING.md, and ARCHITECTURE.md explain the updated lifecycle. Full
+- The README and the former standalone guides explained that revision's lifecycle. The current architecture is consolidated in README.md; the personal learning guide is stored outside the repository. Full
   reloads, closed tabs, and network disconnects still interrupt the stream.
 - Authenticated browser navigation and real provider calls were not exercised;
   transport regression tests use controlled SSE responses.
