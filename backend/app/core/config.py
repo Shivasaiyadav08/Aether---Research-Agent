@@ -67,6 +67,11 @@ class Config(BaseSettings):
     max_research_jobs: int = Field(default=2, ge=1, le=8)
     user_requests_per_minute: int = Field(default=120, ge=10, le=1000)
     database_url: str = ""
+    vector_provider: str = Field(default="chroma", pattern=r"^(chroma|supabase)$")
+    storage_provider: str = Field(default="auto", pattern=r"^(auto|local|r2|supabase)$")
+    supabase_url: str = ""
+    supabase_secret_key: str = Field(default="", validation_alias=AliasChoices("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY"))
+    supabase_storage_bucket: str = "crebry-documents"
     environment: str = Field(default="development", pattern=r"^(development|test|production)$")
     persistent_data_root: Path | None = None
     gemini_free_project_confirmed: bool = False

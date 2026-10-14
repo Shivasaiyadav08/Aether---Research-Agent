@@ -47,6 +47,8 @@ out or changing accounts detaches the browser and clears private state. Backend 
 
 ## Local reliability and Docker
 
+For Render Free with persistent Supabase database, vectors and private uploads, follow [the Supabase deployment steps](docs/supabase-deployment.md). Clerk remains the authentication provider. No Render disk is needed in this mode.
+
 See [the reliability report](docs/reliability-report.md) for verified changes, `docker.yml` usage, dependency profiles, storage requirements, safe recovery and rollback. Docker builds install the frozen `uv.lock` production profile; development tools and local CPU embeddings are excluded.
 
 ## Setup on this Windows computer

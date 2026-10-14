@@ -24,9 +24,17 @@ configure_process_memory_environment()
 @asynccontextmanager
 async def lifespan(app):
     check_production_configuration()
-    engine, db_factory = create_database(config.data_dir, config.database_url or None)
+    use_supabase = config.vector_provider == "supabase"
+    engine, db_factory = create_database(config.data_dir, config.database_url or None, schema="crebry" if use_supabase else None)
     app.state.db = db_factory
-    app.state.vectors = VectorStore(config.data_dir, config.embedding_model)
+    if use_supabase:
+        from app.services.postgres_vector import PostgresVectorStore
+        app.state.vectors = PostgresVectorStore(engine, config.data_dir, config.embedding_model)
+    else:
+        app.state.vectors = VectorStore(config.data_dir, config.embedding_model)
+    if config.storage_provider == "supabase":
+        from app.services.supabase_storage import check_bucket
+        check_bucket()
     app.state.routing = RoutingStore(db_factory, config.gemini_project_id)
     configure_ocr_router(app.state.routing)
     app.state.graph = build_graph(app.state.vectors, app.state.routing)

@@ -264,7 +264,7 @@ class AppSettings(Base):
 
 
 # CREATE THE DATABASE CONNECTION
-def create_database(data_dir, database_url=None):
+def create_database(data_dir, database_url=None, *, schema=None):
     """
     Create the data directory, configure SQLite, create tables,
     and return the database engine and session factory.
@@ -284,13 +284,29 @@ def create_database(data_dir, database_url=None):
     if url.startswith(("postgres://", "postgresql://")):
         url = "postgresql+psycopg://" + url.split("://", 1)[1]
     is_sqlite = url.startswith("sqlite:")
-    engine = create_engine(url, connect_args={"check_same_thread": False} if is_sqlite else {}, pool_pre_ping=True)
+    connect_args = {"check_same_thread": False} if is_sqlite else {
+        "connect_timeout": 10, "prepare_threshold": None,
+    }
+    if schema is not None:
+        if is_sqlite or schema != "crebry":
+            raise ValueError("The private Crebry schema requires PostgreSQL.")
+        connect_args.setdefault("sslmode", "require")
+    engine = create_engine(
+        url, connect_args=connect_args, pool_pre_ping=True,
+        **({"pool_size": 3, "max_overflow": 2, "pool_recycle": 300} if not is_sqlite else {}),
+        **({"execution_options": {"schema_translate_map": {None: schema}}} if schema is not None else {}),
+    )
 
     # RUN THIS CODE WHEN A DATABASE CONNECTION IS OPENED.
     @event.listens_for(engine, "connect")
     def enable_foreign_keys(connection, _):
 
         if not is_sqlite:
+            if schema is not None:
+                # Session pooler supports session state; no custom startup parameters.
+                with connection.cursor() as cursor:
+                    cursor.execute("SET search_path TO crebry, extensions, public")
+                connection.commit()
             return
 
         # Enable foreign-key checks in SQLite.
@@ -308,6 +324,8 @@ def create_database(data_dir, database_url=None):
     # CHECK AND UPDATE AN OLDER DATABASE
     # engine.begin() opens a transaction and commits it on success.
     with engine.begin() as connection:
+        if schema is not None and connection.exec_driver_sql("SELECT current_schema()").scalar() != schema:
+            raise RuntimeError("Run backend/supabase/setup.sql in Supabase SQL Editor before starting the backend.")
 
         # Read the existing columns in the workspaces table.
         columns = connection.exec_driver_sql(
@@ -332,6 +350,14 @@ def create_database(data_dir, database_url=None):
     # Create any missing tables based on the classes defined above.
     # This does not automatically migrate every kind of schema change.
     Base.metadata.create_all(engine)
+    if schema is not None:
+        # Defense in depth if this private schema is ever exposed through PostgREST.
+        # Backend table owners bypass RLS; browser roles receive no policies/grants.
+        with engine.begin() as connection:
+            for table in Base.metadata.sorted_tables:
+                quoted = engine.dialect.identifier_preparer.quote_identifier(table.name)
+                connection.exec_driver_sql(f'ALTER TABLE "crebry".{quoted} ENABLE ROW LEVEL SECURITY')
+                connection.exec_driver_sql(f'REVOKE ALL ON TABLE "crebry".{quoted} FROM PUBLIC, anon, authenticated')
 
     # Create a factory for opening database sessions.
     # A session is used to query, insert, update, and delete records.

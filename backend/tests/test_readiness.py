@@ -11,6 +11,7 @@ def production(monkeypatch):
         "gemini_free_project_confirmed": True, "frontend_origin": "https://research.example",
         "clerk_authorized_parties": "https://research.example", "persistent_data_root": None,
         "database_url": "", "chroma_host": "",
+        "vector_provider": "chroma", "storage_provider": "auto",
     }.items():
         monkeypatch.setattr(config, field, value)
 

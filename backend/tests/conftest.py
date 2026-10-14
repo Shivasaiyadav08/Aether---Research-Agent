@@ -33,6 +33,10 @@ def vectors(tmp_path):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "environment", "test")
+    monkeypatch.setattr(config, "database_url", "")
+    monkeypatch.setattr(config, "vector_provider", "chroma")
+    monkeypatch.setattr(config, "storage_provider", "local")
     monkeypatch.setattr(config, "data_dir", tmp_path)
     monkeypatch.setattr(config, "gemini_api_key", "")
     monkeypatch.setattr(config, "tavily_api_key", "")

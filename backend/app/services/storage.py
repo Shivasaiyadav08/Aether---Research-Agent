@@ -104,11 +104,18 @@ def _sigv4_headers(
 
 def _r2_configured() -> bool:
     return bool(
-        config.r2_account_id
+        config.storage_provider in {"auto", "r2"}
+        and config.r2_account_id
         and config.r2_access_key_id
         and config.r2_secret_access_key
         and config.r2_bucket_name
     )
+
+
+def provider() -> str:
+    if config.storage_provider == "supabase":
+        return "supabase"
+    return "r2" if _r2_configured() else "local"
 
 
 def _r2_endpoint() -> str:
@@ -125,6 +132,9 @@ def _local_path(workspace_id: str, document_id: str) -> Path:
 
 def upload_file(workspace_id: str, document_id: str, content_or_path) -> None:
     """Upload a document file to R2 (or save locally as fallback)."""
+    if provider() == "supabase":
+        from app.services import supabase_storage
+        return supabase_storage.upload_file(workspace_id, document_id, content_or_path)
     if not _r2_configured():
         dest = _local_path(workspace_id, document_id)
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -167,6 +177,9 @@ def upload_file(workspace_id: str, document_id: str, content_or_path) -> None:
 
 def download_file(workspace_id: str, document_id: str) -> bytes:
     """Download a document file from R2 (or from local disk as fallback)."""
+    if provider() == "supabase":
+        from app.services import supabase_storage
+        return supabase_storage.download_file(workspace_id, document_id)
     if not _r2_configured():
         path = _local_path(workspace_id, document_id)
         if not path.is_file():
@@ -201,6 +214,9 @@ def download_file(workspace_id: str, document_id: str) -> bytes:
 
 def delete_file(workspace_id: str, document_id: str) -> None:
     """Delete a document file from R2 or local disk."""
+    if provider() == "supabase":
+        from app.services import supabase_storage
+        return supabase_storage.delete_file(workspace_id, document_id)
     if not _r2_configured():
         _local_path(workspace_id, document_id).unlink(missing_ok=True)
         return
@@ -234,6 +250,9 @@ def delete_file(workspace_id: str, document_id: str) -> None:
 
 def delete_workspace_files(workspace_id: str) -> None:
     """Delete all files belonging to a workspace from R2 or local disk."""
+    if provider() == "supabase":
+        from app.services import supabase_storage
+        return supabase_storage.delete_workspace_files(workspace_id)
     if not _r2_configured():
         folder = config.data_dir / "uploads" / workspace_id
         if folder.exists():
@@ -276,7 +295,7 @@ def delete_workspace_files(workspace_id: str) -> None:
 
 def file_exists_locally(workspace_id: str, document_id: str) -> bool:
     """Check if a file exists on local disk."""
-    return _local_path(workspace_id, document_id).is_file()
+    return provider() == "local" and _local_path(workspace_id, document_id).is_file()
 
 
 def local_path(workspace_id: str, document_id: str) -> Path:

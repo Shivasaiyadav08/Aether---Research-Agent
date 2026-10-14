@@ -2,6 +2,8 @@
 
 Branch: `feat/production-reliability`. Production deployment and data migration are reserved for the owner. No production data was changed.
 
+Update: `feat/supabase-free-storage` adds PostgreSQL/pgvector and private Supabase Storage for Render Free without a disk. Follow [Supabase deployment](supabase-deployment.md) for the current free-hosting configuration; the disk/Chroma/R2 alternatives below remain supported. This change passed 77 focused local tests; live Supabase access remains an operator check.
+
 ## Root causes and changes
 
 | Finding | Implementation |

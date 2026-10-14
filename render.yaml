@@ -11,9 +11,19 @@
       - key: ENVIRONMENT
         value: production
       - key: DATA_DIR
+        value: /var/data/crebry
+      - key: DATABASE_URL
         sync: false
-      - key: PERSISTENT_DATA_ROOT
+      - key: VECTOR_PROVIDER
+        value: supabase
+      - key: STORAGE_PROVIDER
+        value: supabase
+      - key: SUPABASE_URL
         sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: crebry-documents
       - key: GEMINI_PROJECT_ID
         sync: false
       - key: GEMINI_FREE_PROJECT_CONFIRMED

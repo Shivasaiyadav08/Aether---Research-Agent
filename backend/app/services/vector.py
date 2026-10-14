@@ -1,8 +1,6 @@
 import logging
 from threading import RLock
 
-import chromadb
-
 from app.core.config import config
 from app.core.memory import check_and_collect_garbage, log_stage_memory
 
@@ -15,6 +13,8 @@ class VectorStore:
     """One persistent collection per workspace; the local model loads lazily and safely."""
 
     def __init__(self, data_dir, model_name, embedder=None):
+        import chromadb
+
         self.client = chromadb.HttpClient(
             host=config.chroma_host, port=config.chroma_port, ssl=config.chroma_ssl,
             headers={"Authorization": f"Bearer {config.chroma_auth_token}"} if config.chroma_auth_token else None,
