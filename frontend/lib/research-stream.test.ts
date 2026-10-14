@@ -9,6 +9,41 @@ import type { WorkflowEvent } from "../types";
 
 const pending: Promise<void>[] = [];
 
+it("keeps a visible draft stable through validation correction and publishes the final once", () => {
+  const receive = useResearch.getState().receiveEvent;
+  receive({ type: "start", conversation_id: "conversation", run_id: "run" });
+  receive({ type: "answer_reset", attempt: 1 });
+  receive({ type: "token", text: "Initial answer [W1]." });
+  receive({ type: "answer_reset", attempt: 2 });
+  receive({ type: "answer_reset", attempt: 2, model: "replacement" });
+  receive({ type: "token", text: "Corrected grounded answer [W1]." });
+  expect(useResearch.getState().draft).toBe("Initial answer [W1].");
+  expect(useResearch.getState().correctingDraft).toBe(true);
+  const message = {
+    id: "final",
+    role: "assistant" as const,
+    content: "Corrected grounded answer [W1].",
+    sources: [],
+  };
+  receive({ type: "final", message });
+  receive({ type: "final", message }); // Reconnection may replay the same publication.
+  expect(
+    useResearch.getState().messages.filter((item) => item.id === "final"),
+  ).toHaveLength(1);
+  expect(useResearch.getState().draft).toBe("");
+  expect(useResearch.getState().correctingDraft).toBe(false);
+});
+
+it("still discards partial tokens on provider fallback during the initial generation", () => {
+  const receive = useResearch.getState().receiveEvent;
+  receive({ type: "answer_reset", attempt: 1, model: "first" });
+  receive({ type: "token", text: "Incomplete draft" });
+  receive({ type: "answer_reset", attempt: 1, model: "second" });
+  receive({ type: "token", text: "Complete replacement" });
+  expect(useResearch.getState().draft).toBe("Complete replacement");
+  expect(useResearch.getState().correctingDraft).toBe(false);
+});
+
 beforeEach(() => {
   setResearchSession("user_alice");
   useResearch.getState().update({

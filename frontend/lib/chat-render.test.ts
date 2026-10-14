@@ -28,6 +28,7 @@ beforeEach(() => {
       },
     ],
     draft: "",
+    correctingDraft: false,
     streaming: false,
     health: { gemini_configured: true, tavily_configured: true },
     error: "",
@@ -74,11 +75,14 @@ it("keeps removed models out of the UI and gives fallback controls their own lay
 });
 
 it("shows missing web search visibly and preserves web citation rendering", () => {
+  context.state.selectedModel = "auto";
+  context.state.actualModel = "gemini-3.5-flash-lite";
+  context.state.automaticFallback = true;
   context.state.health = { gemini_configured: true, tavily_configured: false };
   (context.state.messages as object[]).push({
     id: "answer",
     role: "assistant",
-    content: "Web evidence supports this claim [W1].",
+    content: "Web evidence supports this claim [W1, W2].",
     sources: [
       {
         id: "W1",
@@ -87,11 +91,23 @@ it("shows missing web search visibly and preserves web citation rendering", () =
         text: "Evidence",
         url: "https://example.org/report",
       },
+      {
+        id: "W2",
+        kind: "web",
+        name: "Second report",
+        text: "Supporting evidence",
+        url: "https://example.org/second",
+      },
     ],
   });
   const html = renderToStaticMarkup(createElement(Chat));
   expect(html).toContain("Web search is not connected");
   expect(html).toContain('aria-label="View source W1"');
+  expect(html).toContain('aria-label="View source W2"');
+  expect(html).toContain("Web sources");
+  expect(html).not.toContain("Uploaded documents");
+  expect(html.match(/value="auto"/g)).toHaveLength(1);
+  expect(html).toContain("model-picker-controls");
   // Ignored artifact for checking the actual component CSS at desktop/mobile widths.
   mkdirSync(".tmp", { recursive: true });
   const css = ["globals", "design-tokens", "workspace"]
@@ -106,7 +122,12 @@ it("shows missing web search visibly and preserves web citation rendering", () =
 it("replaces the streaming bubble with the accepted answer without a duplicate placeholder", () => {
   context.state.streaming = true;
   context.state.events = [{ type: "final" }];
-  (context.state.messages as object[]).push({ id: "answer", role: "assistant", content: "Saved grounded answer", sources: [] });
+  (context.state.messages as object[]).push({
+    id: "answer",
+    role: "assistant",
+    content: "Saved grounded answer",
+    sources: [],
+  });
   const html = renderToStaticMarkup(createElement(Chat));
   expect(html.match(/Saved grounded answer/g)).toHaveLength(1);
   expect(html).not.toContain('class="thinking"');

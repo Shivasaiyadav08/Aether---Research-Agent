@@ -34,7 +34,14 @@ export async function resumeResearch(runId: string) {
   const current = () =>
     sequence === run.sequence &&
     useResearch.getState().sessionId === state.sessionId;
-  state.update({ streaming: true, draft: "", error: "", events: [], runId });
+  state.update({
+    streaming: true,
+    draft: "",
+    correctingDraft: false,
+    error: "",
+    events: [],
+    runId,
+  });
   try {
     const response = await fetch(
       `${API_URL}/workspaces/${state.workspaceId}/workflows/${runId}/events`,
@@ -88,6 +95,7 @@ export async function restoreResearchConversation(
     conversationId,
     messages: chat.messages,
     draft: "",
+    correctingDraft: false,
     runId: chat.latest_run?.resumable ? (run?.id ?? null) : null,
     events: run ? [{ type: "start", run_id: run.id }, ...run.events] : [],
     elapsedMs: run?.duration_ms ?? 0,
@@ -177,6 +185,7 @@ export async function sendResearch(question: string, regenerate = false) {
   state.update({
     streaming: true,
     draft: "",
+    correctingDraft: false,
     error: "",
     events: [],
     warnings: [],

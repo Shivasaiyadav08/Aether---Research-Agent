@@ -27,6 +27,7 @@ type ResearchState = {
   streaming: boolean;
   uploading: boolean;
   draft: string;
+  correctingDraft: boolean;
   health: Health | null;
   sessionId: string;
   models: Model[];
@@ -61,6 +62,7 @@ export const useResearch = create<ResearchState>((set) => ({
   streaming: false,
   uploading: false,
   draft: "",
+  correctingDraft: false,
   health: null,
   sessionId: "",
   models: [],
@@ -91,6 +93,7 @@ export const useResearch = create<ResearchState>((set) => ({
       messages: [],
       events: [],
       draft: "",
+      correctingDraft: false,
       error: "",
       warnings: [],
       elapsedMs: 0,
@@ -125,11 +128,20 @@ export const useResearch = create<ResearchState>((set) => ({
         patch.runId = event.run_id ?? null;
         patch.error = "";
         patch.draft = "";
+        patch.correctingDraft = false;
       }
-      if (event.type === "answer_reset") patch.draft = "";
-      if (event.type === "token") patch.draft = state.draft + event.text;
+      if (event.type === "answer_reset") {
+        // Keep the first draft stable while the backend checks a correction.
+        // Provider fallback on the initial attempt still discards partial text.
+        patch.correctingDraft =
+          state.correctingDraft || (event.attempt ?? 1) > 1;
+        if (!patch.correctingDraft) patch.draft = "";
+      }
+      if (event.type === "token" && !state.correctingDraft)
+        patch.draft = state.draft + (event.text ?? "");
       if (event.type === "final") {
         patch.draft = "";
+        patch.correctingDraft = false;
         patch.warnings = event.warnings ?? [];
         if (event.message && typeof event.message !== "string")
           patch.messages = [
@@ -142,6 +154,7 @@ export const useResearch = create<ResearchState>((set) => ({
       if (event.type === "error") {
         patch.error = String(event.message);
         patch.draft = "";
+        patch.correctingDraft = false;
       }
       if (event.type === "done")
         patch.elapsedMs = event.duration_ms ?? state.elapsedMs;

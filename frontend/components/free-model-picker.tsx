@@ -74,44 +74,56 @@ export function FreeModelPicker() {
   }
   return (
     <div className="free-model-picker">
-      <Sparkles size={13} aria-hidden="true" />
-      <select
-        aria-label="Free-tier Gemini research model"
-        title="Models eligible for Google's free tier. Actual quota is checked on use; your Google project's billing tier controls charges."
-        value={selectedModel}
-        disabled={streaming || loading || !eligibleModels.length}
-        onChange={(event) =>
-          update({
-            selectedModel: event.target.value,
-            automaticFallback: event.target.value === "auto",
-            modelNotice: "",
-          })
-        }
-      >
-        <option value="auto">Automatic selection</option>
-        {!selectedModel && (
-          <option value="">No eligible Gemini model ready</option>
-        )}
-        {selectedModel &&
-          modelAllowed(selectedModel) &&
-          !models.some((model) => model.id === selectedModel) && (
-            <option value={selectedModel}>
-              {selectedModel} · Gemini fallback
-            </option>
+      <div className="model-picker-controls">
+        <Sparkles size={13} aria-hidden="true" />
+        <select
+          aria-label="Free-tier Gemini research model"
+          title="Models eligible for Google's free tier. Actual quota is checked on use; your Google project's billing tier controls charges."
+          value={selectedModel}
+          disabled={streaming || loading || !eligibleModels.length}
+          onChange={(event) =>
+            update({
+              selectedModel: event.target.value,
+              automaticFallback: event.target.value === "auto",
+              modelNotice: "",
+            })
+          }
+        >
+          <option value="auto">Automatic selection</option>
+          {!selectedModel && (
+            <option value="">No eligible Gemini model ready</option>
           )}
-        {eligibleModels.map((model) => (
-          <option
-            key={model.id}
-            value={model.id}
-            disabled={model.available === false}
-          >
-            {model.name} ·{" "}
-            {model.available === false
-              ? `Cooldown · retry in ${model.retry_after_seconds ?? 60}s`
-              : "Free tier"}
-          </option>
-        ))}
-      </select>
+          {selectedModel &&
+            selectedModel !== "auto" &&
+            modelAllowed(selectedModel) &&
+            !models.some((model) => model.id === selectedModel) && (
+              <option value={selectedModel}>
+                {selectedModel} · Gemini fallback
+              </option>
+            )}
+          {eligibleModels.map((model) => (
+            <option
+              key={model.id}
+              value={model.id}
+              disabled={model.available === false}
+            >
+              {model.name} ·{" "}
+              {model.available === false
+                ? `Cooldown · retry in ${model.retry_after_seconds ?? 60}s`
+                : "Free tier"}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          aria-label="Refresh free models"
+          title="Refresh free models"
+          disabled={streaming || loading}
+          onClick={() => void refresh()}
+        >
+          <RefreshCw size={14} className={loading ? "spin" : ""} />
+        </button>
+      </div>
       <label
         className="model-fallback-control"
         title="Allow another verified free-tier model when the selected model fails"
@@ -135,15 +147,6 @@ export function FreeModelPicker() {
           Using {actualModel}
         </span>
       )}
-      <button
-        type="button"
-        aria-label="Refresh free models"
-        title="Refresh free models"
-        disabled={streaming || loading}
-        onClick={() => void refresh()}
-      >
-        <RefreshCw size={12} className={loading ? "spin" : ""} />
-      </button>
       {modelNotice && (
         <span className="model-notice" role="status">
           {modelNotice}

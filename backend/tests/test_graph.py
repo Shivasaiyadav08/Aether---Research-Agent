@@ -270,6 +270,29 @@ def test_routing_and_citation_membership():
     assert validation_route({"valid": False, "attempts": 2, "settings": {"max_retries": 1}}) == "finalize"
     assert citation_errors("Facts [D1] and [W1]", [{"id": "D1"}, {"id": "W1"}]) == []
     assert citation_errors("Facts [D2]", [{"id": "D1"}])
+    assert citation_errors("Facts [W1, W2]", [{"id": "W1"}, {"id": "W2"}]) == []
+    assert citation_errors("Facts [W1, W99]", [{"id": "W1"}]) == ["Unknown citation [W99]"]
+
+
+async def test_grouped_web_citations_publish_all_sources_without_regenerating(vectors, monkeypatch):
+    mock_ai(monkeypatch, answer="Astronomy studies stars [W1, W2].")
+
+    async def search(query):
+        return [{"id": f"W{i}", "kind": "web", "name": "Web report", "url": f"https://example.org/{i}", "text": "Astronomy studies stars"} for i in (1, 2)]
+
+    class Model:
+        async def astream(self, messages):
+            payload = json.loads(messages[-1].content)
+            assert payload["evidence_origin"] == "web sources"
+            assert "W IDs identify web pages, not uploaded documents" in messages[0].content
+            yield AIMessageChunk(content="Astronomy studies stars [W1, W2].")
+
+    monkeypatch.setattr("app.agents.nodes.search_web", search)
+    monkeypatch.setattr("app.agents.nodes.create_llm", lambda _: Model())
+    events = await run_graph(vectors)
+    assert events[-1]["valid"]
+    assert {source["id"] for source in events[-1]["sources"]} == {"W1", "W2"}
+    assert len([event for event in events if event["type"] == "node_start" and event["node"] == "generate"]) == 1
 
 
 async def test_relevance_threshold_boundary(vectors, monkeypatch):

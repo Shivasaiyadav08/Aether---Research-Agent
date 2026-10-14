@@ -37,10 +37,17 @@ export function Answer({
   sources: Source[];
 }) {
   const update = useResearch((state) => state.update);
-  const linked = content.replace(/\[([DW]\d+)\]/g, (match, id) =>
-    sources.some((source) => source.id === id)
-      ? `[${id}](#source-${id})`
-      : match,
+  const linked = content.replace(
+    /\[([DW]\d+(?:\s*,\s*[DW]\d+)*)\]/g,
+    (_match, group: string) =>
+      group
+        .split(/\s*,\s*/)
+        .map((id) =>
+          sources.some((source) => source.id === id)
+            ? `[${id}](#source-${id})`
+            : `[${id}]`,
+        )
+        .join(" "),
   );
   return (
     <div className="markdown" translate="no">
@@ -77,6 +84,21 @@ export function Answer({
   );
 }
 
+function EvidenceOrigin({ sources }: { sources: Source[] }) {
+  const web = sources.some((source) => source.kind === "web");
+  const documents = sources.some((source) => source.kind === "document");
+  if (!web && !documents) return null;
+  return (
+    <span className="evidence-origin">
+      {web && documents
+        ? "Document and web sources"
+        : web
+          ? "Web sources"
+          : "Uploaded documents"}
+    </span>
+  );
+}
+
 const suggestions = [
   {
     icon: FileText,
@@ -99,6 +121,7 @@ export function Chat() {
   const {
     messages,
     draft,
+    correctingDraft,
     streaming,
     health,
     error,
@@ -247,6 +270,7 @@ export function Chat() {
                   )}
                   {message.role === "assistant" ? (
                     <>
+                      <EvidenceOrigin sources={message.sources} />
                       <Answer
                         content={message.content}
                         sources={message.sources}
@@ -325,9 +349,25 @@ export function Chat() {
                   </div>
                   {draft ? (
                     <>
+                      <EvidenceOrigin
+                        sources={[
+                          ...events
+                            .filter(
+                              (event) =>
+                                event.type === "grade" &&
+                                event.source?.accepted,
+                            )
+                            .map((event) => event.source!),
+                          ...(events.find(
+                            (event) => event.type === "web_sources",
+                          )?.sources ?? []),
+                        ]}
+                      />
                       <Answer content={smoothDraft} sources={available} />
                       <span className="provisional">
-                        Draft · checking evidence before saving
+                        {correctingDraft
+                          ? "Checking a correction against the evidence · your draft stays visible"
+                          : "Draft · checking evidence before saving"}
                       </span>
                     </>
                   ) : (
@@ -344,21 +384,23 @@ export function Chat() {
         )}
       </div>
       {!nearBottom && (
-        <Button
-          variant="secondary"
-          size="icon"
-          className="scroll-bottom"
-          onClick={() => {
-            setNearBottom(true);
-            scrollArea.current?.scrollTo({
-              top: scrollArea.current.scrollHeight,
-              behavior: "smooth",
-            });
-          }}
-          aria-label="Scroll to latest message"
-        >
-          <ArrowDown size={16} />
-        </Button>
+        <div className="scroll-bottom-anchor">
+          <Button
+            variant="secondary"
+            size="icon"
+            className="scroll-bottom"
+            onClick={() => {
+              setNearBottom(true);
+              scrollArea.current?.scrollTo({
+                top: scrollArea.current.scrollHeight,
+                behavior: "smooth",
+              });
+            }}
+            aria-label="Scroll to latest message"
+          >
+            <ArrowDown size={16} />
+          </Button>
+        </div>
       )}
       <div className="composer-area">
         {error && (

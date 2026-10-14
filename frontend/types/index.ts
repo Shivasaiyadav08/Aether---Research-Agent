@@ -67,6 +67,7 @@ export type Health = {
 };
 export type WorkflowEvent = {
   type: string;
+  attempt?: number;
   node?: string;
   duration_ms?: number;
   elapsed_ms?: number;

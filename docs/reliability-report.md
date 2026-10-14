@@ -12,6 +12,8 @@ The composer wraps its model/fallback/relevance controls; user messages use an i
 
 ## Root causes and changes
 
+Stable-answer follow-up: grouped citations such as `[W1, W2]` now pass exact ID membership checks and retain both sources at publication; unknown grouped IDs remain rejected. Generation and semantic validation explicitly distinguish uploaded documents from web pages, and the UI labels the cited source origin. Validation corrections keep the initial provisional draft visible and replace it once at final publication; initial provider failures still discard incomplete drafts. Bounded grounding retries and saved job checkpoints remain intact. The selector/refresh controls stay grouped, automatic mode has one option, and container queries place controls across rows on narrow screens. The jump-to-latest button is anchored above the composer rather than at a fixed page offset. 21 focused graph/job tests and 28 frontend tests passed, along with Ruff, ESLint and the frontend production build. Desktop and 375px previews had no horizontal overflow. No production provider calls or saved-data edits were performed in this follow-up.
+
 | Finding | Implementation |
 | --- | --- |
 | Three attempts included repeated attempts on one model, starving later models | Every compatible distinct model is considered before a bounded retry pass. Attempts share a deadline; each attempt reserves time for remaining candidates. |
