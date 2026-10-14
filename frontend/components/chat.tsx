@@ -17,8 +17,10 @@ import {
   RotateCcw,
   Square,
   Telescope,
+  UserRound,
 } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
+import { useSmoothedText } from "@/hooks/use-smoothed-text";
 import { useResearch } from "@/stores/research";
 import { Button } from "@/components/ui/button";
 import type { Source } from "@/types";
@@ -41,7 +43,7 @@ export function Answer({
       : match,
   );
   return (
-    <div className="markdown">
+    <div className="markdown" translate="no">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -110,6 +112,7 @@ export function Chat() {
   } = useResearch();
   const { send, stop } = useChat();
   const reducedMotion = useReducedMotion();
+  const smoothDraft = useSmoothedText(draft, streaming && !reducedMotion);
   const workspace = workspaces.find((item) => item.id === workspaceId);
   const [question, setQuestion] = useState("");
   const [copied, setCopied] = useState("");
@@ -133,7 +136,7 @@ export function Chat() {
         top: scrollArea.current.scrollHeight,
         behavior: "instant",
       });
-  }, [messages, draft, events.length, nearBottom, empty]);
+  }, [messages, smoothDraft, events.length, nearBottom, empty]);
 
   function submit() {
     if (question.trim() && !streaming) {
@@ -220,22 +223,28 @@ export function Chat() {
               <motion.article
                 key={message.id}
                 className={`message ${message.role}`}
+                aria-label={
+                  message.role === "user" ? "Your question" : "Research answer"
+                }
+                translate="no"
                 initial={reducedMotion ? false : { opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2 }}
               >
-                <div className="message-avatar">
-                  {message.role === "assistant" ? <BrandMark /> : "Y"}
+                <div className="message-avatar" aria-hidden="true">
+                  {message.role === "assistant" ? (
+                    <BrandMark />
+                  ) : (
+                    <UserRound size={15} />
+                  )}
                 </div>
                 <div className="message-body">
-                  <div className="message-heading">
-                    <strong>
-                      {message.role === "assistant" ? "Crebry" : "You"}
-                    </strong>
-                    <span>
-                      {message.role === "assistant" ? "Research answer" : ""}
-                    </span>
-                  </div>
+                  {message.role === "assistant" && (
+                    <div className="message-heading">
+                      <strong>Crebry</strong>
+                      <span>Research answer</span>
+                    </div>
+                  )}
                   {message.role === "assistant" ? (
                     <>
                       <Answer
@@ -301,7 +310,7 @@ export function Chat() {
                 </div>
               </motion.article>
             ))}
-            {streaming && (
+            {streaming && !events.some((event) => event.type === "final") && (
               <article className="message assistant">
                 <div className="message-avatar">
                   <BrandMark />
@@ -316,7 +325,7 @@ export function Chat() {
                   </div>
                   {draft ? (
                     <>
-                      <Answer content={draft} sources={available} />
+                      <Answer content={smoothDraft} sources={available} />
                       <span className="provisional">
                         Draft · checking evidence before saving
                       </span>
@@ -369,7 +378,15 @@ export function Chat() {
           </div>
         )}
         {warnings.length > 0 && (
-          <details className="warnings">
+          <details
+            className="warnings"
+            open={events.some(
+              (event) =>
+                event.type === "web_sources" &&
+                typeof event.message === "string" &&
+                !!event.message,
+            )}
+          >
             <summary>
               {warnings.length} research{" "}
               {warnings.length === 1 ? "note" : "notes"}
@@ -458,6 +475,12 @@ export function Chat() {
         {health && !health.gemini_configured && (
           <p className="setup-hint">
             Research is unavailable until the application owner connects Gemini.
+          </p>
+        )}
+        {health && !health.tavily_configured && (
+          <p className="setup-hint" role="status">
+            Web search is not connected. Research can use uploaded documents
+            only.
           </p>
         )}
       </div>

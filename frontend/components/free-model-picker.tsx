@@ -4,6 +4,7 @@ import { RefreshCw, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { useResearch } from "@/stores/research";
 import type { Model } from "@/types";
+import { modelAllowed } from "@/lib/model-policy";
 
 export function FreeModelPicker() {
   const {
@@ -16,6 +17,19 @@ export function FreeModelPicker() {
     update,
   } = useResearch();
   const [loading, setLoading] = useState(false);
+  const eligibleModels = models.filter((model) => modelAllowed(model.id));
+  useEffect(() => {
+    if (selectedModel && !modelAllowed(selectedModel)) {
+      update({
+        selectedModel:
+          models.find(
+            (model) => modelAllowed(model.id) && model.available !== false,
+          )?.id || "auto",
+        modelNotice:
+          "The previously selected model was removed. Choose a remaining free model.",
+      });
+    }
+  }, [models, selectedModel, update]);
   const hasCooldowns = models.some((model) => model.available === false);
   useEffect(() => {
     if (!hasCooldowns) return;
@@ -29,15 +43,21 @@ export function FreeModelPicker() {
     const sessionId = useResearch.getState().sessionId;
     setLoading(true);
     try {
-      const models = await api<Model[]>("/models?refresh=true");
+      const models = (await api<Model[]>("/models?refresh=true")).filter(
+        (model) => modelAllowed(model.id),
+      );
       if (useResearch.getState().sessionId !== sessionId) return;
       update({
         models,
-        selectedModel: models.some(
-          (model) => model.id === selectedModel && model.available !== false,
-        )
-          ? selectedModel
-          : models.find((model) => model.available !== false)?.id || "",
+        selectedModel:
+          selectedModel === "auto"
+            ? "auto"
+            : models.some(
+                  (model) =>
+                    model.id === selectedModel && model.available !== false,
+                )
+              ? selectedModel
+              : models.find((model) => model.available !== false)?.id || "",
         modelNotice: "",
       });
     } catch (error) {
@@ -54,12 +74,12 @@ export function FreeModelPicker() {
   }
   return (
     <div className="free-model-picker">
-      <Sparkles size={13} />
+      <Sparkles size={13} aria-hidden="true" />
       <select
         aria-label="Free-tier Gemini research model"
         title="Models eligible for Google's free tier. Actual quota is checked on use; your Google project's billing tier controls charges."
         value={selectedModel}
-        disabled={streaming || loading || !models.length}
+        disabled={streaming || loading || !eligibleModels.length}
         onChange={(event) =>
           update({
             selectedModel: event.target.value,
@@ -73,12 +93,13 @@ export function FreeModelPicker() {
           <option value="">No eligible Gemini model ready</option>
         )}
         {selectedModel &&
+          modelAllowed(selectedModel) &&
           !models.some((model) => model.id === selectedModel) && (
             <option value={selectedModel}>
               {selectedModel} · Gemini fallback
             </option>
           )}
-        {models.map((model) => (
+        {eligibleModels.map((model) => (
           <option
             key={model.id}
             value={model.id}
@@ -91,7 +112,10 @@ export function FreeModelPicker() {
           </option>
         ))}
       </select>
-      <label title="Allow another verified free-tier model when the selected model fails">
+      <label
+        className="model-fallback-control"
+        title="Allow another verified free-tier model when the selected model fails"
+      >
         <input
           type="checkbox"
           checked={automaticFallback}
@@ -100,10 +124,16 @@ export function FreeModelPicker() {
             update({ automaticFallback: event.target.checked })
           }
         />
-        Auto fallback
+        <span>Auto fallback</span>
       </label>
       {actualModel && actualModel !== selectedModel && (
-        <span role="status">Using {actualModel}</span>
+        <span
+          className="actual-model-status"
+          role="status"
+          title={`Actual model: ${actualModel}`}
+        >
+          Using {actualModel}
+        </span>
       )}
       <button
         type="button"

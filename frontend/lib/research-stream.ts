@@ -91,7 +91,8 @@ export async function restoreResearchConversation(
     runId: chat.latest_run?.resumable ? (run?.id ?? null) : null,
     events: run ? [{ type: "start", run_id: run.id }, ...run.events] : [],
     elapsedMs: run?.duration_ms ?? 0,
-    warnings: [],
+    warnings:
+      run?.events.findLast((event) => event.type === "final")?.warnings ?? [],
     error: run?.error ?? "",
   });
   if (

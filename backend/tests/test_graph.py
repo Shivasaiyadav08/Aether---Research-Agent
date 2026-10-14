@@ -231,7 +231,7 @@ async def test_web_failure_abstains_without_fabricating(vectors, monkeypatch):
 
     monkeypatch.setattr("app.agents.nodes.search_web", fail)
     events = await run_graph(vectors)
-    assert "could not find usable evidence" in events[-1]["answer"]
+    assert "do not provide evidence" in events[-1]["answer"]
     assert any("Web search failed" in warning for warning in events[-1]["warnings"])
     assert "private provider details" not in str(events)
 

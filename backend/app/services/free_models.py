@@ -27,6 +27,11 @@ _cooldowns: dict[str, float] = {}
 _cooldown_key = ""
 
 
+def model_allowed(model_id: str) -> bool:
+    """Operator exclusions apply to catalogs, cached plans, OCR and direct calls."""
+    return not re.match(r"^gemini-3\.(?:6|8)-flash(?:$|-)", model_id.removeprefix("models/"))
+
+
 def reset_key_cooldowns():
     """Failures for one credential must not disable models for a replacement key."""
     global _cooldown_key
@@ -83,6 +88,7 @@ def is_free_text_model(item: dict, eligible: set[str]) -> bool:
     model_id = item.get("name", "").removeprefix("models/")
     return (
         model_id in eligible
+        and model_allowed(model_id)
         and "generateContent" in item.get("supportedGenerationMethods", [])
         and not any(word in model_id for word in ("image", "tts", "audio", "live", "transcribe", "robotics"))
     )
@@ -122,7 +128,7 @@ def model_availability(model: str) -> dict:
 
 
 def availability(models: list[dict]) -> list[dict]:
-    return [{**item, **model_availability(item["id"])} for item in models]
+    return [{**item, **model_availability(item["id"])} for item in models if model_allowed(item["id"])]
 
 
 def get_free_models_sync() -> list[dict]:

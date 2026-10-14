@@ -49,6 +49,7 @@ class GraphState(TypedDict, total=False):
     sources: list[dict]
     assessment: dict
     rewritten_query: str
+    web_search_error: str
     answer: str
     attempts: int
     valid: bool

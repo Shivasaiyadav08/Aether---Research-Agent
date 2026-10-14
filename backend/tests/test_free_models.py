@@ -97,10 +97,10 @@ async def test_real_api_contract_pagination_intersection_cache_and_refresh(monke
         free_models.httpx, "AsyncClient", lambda **_: original_client(transport=httpx.MockTransport(respond))
     )
     models = await free_models.get_free_models()
-    assert [item["id"] for item in models] == ["gemini-3.8-flash", "gemini-2.5-pro"]
+    assert [item["id"] for item in models] == ["gemini-2.5-pro"]
     assert all(item["available"] and item["free_tier_eligible"] for item in models)
     assert len(calls) == 3
-    free_models.mark_model_unavailable("gemini-3.8-flash")
+    free_models.mark_model_unavailable("gemini-2.5-pro")
     assert not (await free_models.get_free_models())[0]["available"]
     assert len(calls) == 3
     await free_models.get_free_models(refresh=True)

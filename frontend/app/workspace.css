@@ -379,10 +379,12 @@
   position: relative;
   min-width: 0;
   color: var(--muted);
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 .composer .free-model-picker {
   flex: 1;
-  flex-basis: 120px;
+  flex-basis: 280px;
 }
 .relevance-picker {
   display: inline-flex;
@@ -411,9 +413,33 @@
   border: 0;
   padding: 5px 2px;
   font-size: 11px;
-  max-width: 210px;
+  max-width: min(260px, 100%);
   min-width: 0;
   flex: 1;
+  flex-basis: 180px;
+  text-overflow: ellipsis;
+}
+.model-fallback-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  min-height: 32px;
+}
+.model-fallback-control input {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}
+.actual-model-status {
+  flex-basis: 100%;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.message.user .user-text {
+  padding-top: 2px;
 }
 .free-model-picker select option {
   background: var(--panel);

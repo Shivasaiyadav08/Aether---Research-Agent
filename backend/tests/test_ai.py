@@ -62,6 +62,8 @@ async def test_tavily_response_filters_urls_and_duplicates(monkeypatch):
 
     def respond(request):
         assert str(request.url) == "https://api.tavily.com/search"
+        assert request.headers["authorization"] == "Bearer test-only"
+        assert "api_key" not in json.loads(request.content)
         return httpx.Response(
             200,
             json={
@@ -70,6 +72,9 @@ async def test_tavily_response_filters_urls_and_duplicates(monkeypatch):
                     {"url": "https://example.org/a", "title": "Duplicate", "content": "Evidence"},
                     {"url": "javascript:alert(1)", "content": "Bad URL"},
                     {"url": "https://user:password@example.org", "content": "Embedded credentials"},
+                    {"url": "https://example.org/empty", "content": "  \n "},
+                    {"url": None, "content": "Missing URL"},
+                    {"url": "https://example.org/invalid", "content": ["Invalid content type"]},
                 ]
             },
         )

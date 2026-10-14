@@ -214,6 +214,10 @@ def create_llm(model: str):
         else {}
     )
 
+    from app.services.free_models import model_allowed
+    if not model_allowed(model):
+        raise ValueError("This Gemini model has been disabled by the application owner. Refresh the model list.")
+
     # Create and return a Gemini AI client.
     return ChatGoogleGenerativeAI(
         # Which Gemini model should be used?
@@ -529,6 +533,10 @@ def safe_url(value: str) -> str | None:
 # ============================================================
 
 
+class WebSearchError(ValueError):
+    """Safe Tavily diagnostics that never contain provider bodies or credentials."""
+
+
 async def search_web(query: str) -> list[dict]:
     """
     Search the internet using Tavily API.
@@ -555,7 +563,11 @@ async def search_web(query: str) -> list[dict]:
     # Check whether Tavily API key is configured.
     if not config.tavily_api_key:
         # Without an API key, web search cannot run.
-        raise ValueError("Web fallback is unavailable: add TAVILY_API_KEY to backend/.env.")
+        raise WebSearchError("Web search is not connected on the running backend. The application owner must configure TAVILY_API_KEY in the backend environment.")
+
+    query = query.strip()
+    if not query:
+        raise WebSearchError("Web search needs a non-empty question.")
 
     # Create an asynchronous HTTP client.
     #
@@ -568,10 +580,10 @@ async def search_web(query: str) -> list[dict]:
         response = await client.post(
             # Tavily API endpoint.
             "https://api.tavily.com/search",
+            headers={"Authorization": f"Bearer {config.tavily_api_key}"},
             # JSON request body.
             json={
                 # Authenticate using Tavily API key.
-                "api_key": config.tavily_api_key,
                 # Search query given by the application.
                 "query": query,
                 # Ask for up to 5 results.
@@ -582,6 +594,7 @@ async def search_web(query: str) -> list[dict]:
                 #
                 # We only want the search sources here.
                 "include_answer": False,
+                "auto_parameters": False,
             },
         )
 
@@ -591,13 +604,23 @@ async def search_web(query: str) -> list[dict]:
         # Example:
         # 401 -> Invalid API key
         # 429 -> Rate limit exceeded
-        response.raise_for_status()
+        if response.status_code in {401, 403}:
+            raise WebSearchError(f"Tavily rejected the backend search key (HTTP {response.status_code}). The application owner must check the Tavily key.")
+        if response.status_code in {429, 432, 433}:
+            raise WebSearchError(f"Tavily search quota or rate limit reached (HTTP {response.status_code}). Check Tavily usage and retry after the limit recovers.")
+        if not response.is_success:
+            raise WebSearchError(f"Tavily web search failed (HTTP {response.status_code}). Please retry or check provider status.")
 
         # Convert Tavily's JSON response into Python data.
         #
         # Get "results" or use an empty list
         # if that key does not exist.
-        results = response.json().get("results", [])
+        try:
+            results = response.json().get("results", [])
+            if not isinstance(results, list):
+                raise ValueError
+        except (ValueError, AttributeError):
+            raise WebSearchError("Tavily returned an invalid search response. Please retry.") from None
 
     # Create an empty list to store valid sources.
     sources = []
@@ -608,6 +631,10 @@ async def search_web(query: str) -> list[dict]:
 
     # Examine each search result.
     for result in results:
+        if not isinstance(result, dict) or not isinstance(result.get("content"), str):
+            continue
+        if not isinstance(result.get("url"), str):
+            continue
         # Extract its URL and validate the format.
         url = safe_url(result.get("url", ""))
 
@@ -616,7 +643,8 @@ async def search_web(query: str) -> list[dict]:
         # - URL is invalid.
         # - URL already exists in our results.
         # - Content is missing or empty.
-        if not url or url in seen or not result.get("content"):
+        content = result["content"].strip()
+        if not url or url in seen or not content:
             continue
 
         # Remember the URL so we don't add it again.
@@ -642,7 +670,7 @@ async def search_web(query: str) -> list[dict]:
                 #
                 # If title is missing,
                 # use the URL instead.
-                "name": result.get("title", url),
+                "name": result["title"] if isinstance(result.get("title"), str) and result["title"] else url,
                 # Store at most the first 4000 characters
                 # of the search result's content.
                 #
@@ -651,7 +679,7 @@ async def search_web(query: str) -> list[dict]:
                 #
                 # IMPORTANT:
                 # These are CHARACTERS, not tokens.
-                "text": result["content"][:4000],
+                "text": content[:4000],
             }
         )
 

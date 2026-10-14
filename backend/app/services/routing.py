@@ -169,9 +169,9 @@ def retry_after_seconds(error):
 
 async def execute_fallback(plan, operation, notify, *, store=None, task="generate", input_tokens=0, output_tokens=8192):
     from app.services.ai import ModelFallbackExhausted, is_model_unavailable, retryable_model_error, safe_service_error, service_status
-    from app.services.free_models import mark_model_available, mark_model_unavailable, model_availability
+    from app.services.free_models import mark_model_available, mark_model_unavailable, model_availability, model_allowed
 
-    candidates = list(dict.fromkeys(plan["models"]))
+    candidates = [model for model in dict.fromkeys(plan["models"]) if model_allowed(model)]
     catalog = plan.get("catalog")
     if catalog is not None:
         by_id = {item["id"]: item for item in catalog if item.get("free_tier_eligible")}

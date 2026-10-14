@@ -215,6 +215,13 @@ def make_nodes(vectors, routing_store=None):
             emit("rewrite", query=query)
             finish_node("rewrite", started, query=query, skipped_llm="Web search is not configured.")
             return {"rewritten_query": query, "warnings": warnings}
+        # Explicit topic switches must not inherit the previous document topic.
+        # Keep context rewriting for follow-ups that actually reference history.
+        if not state["sources"] and not re.search(r"\b(it|its|they|their|them|this|that|these|those|he|she|his|her)\b", state["question"], re.I):
+            query = state["question"]
+            emit("rewrite", query=query)
+            finish_node("rewrite", started, query=query, skipped_llm="Standalone question; searching original intent.")
+            return {"rewritten_query": query, "warnings": warnings}
         try:
             result = await ask(
                 state,
@@ -241,19 +248,23 @@ def make_nodes(vectors, routing_store=None):
     async def web_search(state):
         started = start_node("web_search")
         warnings = list(state.get("warnings", []))
+        failure = ""
         try:
             sources = await search_web(state["rewritten_query"])
             if not sources:
-                warnings.append("Web search returned no usable sources.")
+                failure = "Web search returned no usable sources for this question."
+                warnings.append(failure)
         except ValueError as error:
-            warnings.append(str(error))
+            failure = str(error)
+            warnings.append(failure)
             sources = []
         except Exception as error:
-            warnings.append("Web search failed. " + safe_service_error(error))
+            failure = "Web search failed. " + safe_service_error(error)
+            warnings.append(failure)
             sources = []
-        emit("web_sources", sources=sources)
+        emit("web_sources", sources=sources, message=failure, status="unavailable" if failure else "complete")
         finish_node("web_search", started, source_count=len(sources), warnings=warnings)
-        return {"sources": state["sources"] + sources, "warnings": warnings}
+        return {"sources": state["sources"] + sources, "warnings": warnings, "web_search_error": failure}
 
     # Generates and streams the answer using the supplied evidence
     async def generate(state):
@@ -262,7 +273,8 @@ def make_nodes(vectors, routing_store=None):
         # A retry replaces the provisional answer in the UI, instead of appending another answer.
         emit("answer_reset", attempt=attempts)
         if not state["sources"]:
-            answer = "I could not find usable evidence for this question. Upload relevant documents or configure web search, then try again."
+            reason = state.get("web_search_error") or "Web search did not provide usable supporting evidence."
+            answer = "Your uploaded documents do not provide evidence for this question. " + reason + " Retry web research or add a relevant document."
             emit("token", text=answer)
         else:
             messages = [

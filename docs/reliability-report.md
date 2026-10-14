@@ -6,6 +6,10 @@ Update: `feat/supabase-free-storage` adds PostgreSQL/pgvector and private Supaba
 
 Deployment follow-up: `feat/deployment-startup-fixes` removes the fatal bucket-size mismatch, enforces/displays the effective upload limit, validates credentials and pooler URLs early, groups static configuration errors, and permits private scratch fallback only with externally stored Supabase data. 102 focused tests passed. Invalid/public storage and ephemeral user-data configurations remain blocked; no secrets or production data were changed.
 
+Research/UI follow-up: `fix/web-search-models-ui` excludes Gemini 3.6/3.8 Flash families from catalogs, cached fallback plans, OCR and direct calls; other verified free models remain eligible. Tavily uses Bearer authentication and basic search with automatic parameter upgrades disabled. Irrelevant document evidence routes to the original standalone question instead of inheriting an unrelated previous topic. Search errors/empty results are saved in the abstention answer and notes; reopened conversations restore warnings. Citation and grounding checks remain mandatory. The local Tavily key initially returned HTTP 401; after the owner replaced it, one live public football search returned five usable sources. Production credential validity is not inferred from that local result.
+
+The composer wraps its model/fallback/relevance controls; user messages use an icon and preserve the exact message text without extra sender labels. Stream drafts reveal progressively between network batches, honor reduced motion and model resets, and give way to the accepted saved answer without a duplicate placeholder. 94 focused backend tests passed, frontend tests/typecheck/lint/production build passed, and the actual component preview fit desktop and 375px mobile widths without horizontal overflow. The authenticated production chat could not be inspected in the available browser; no saved messages were modified or stripped.
+
 ## Root causes and changes
 
 | Finding | Implementation |
