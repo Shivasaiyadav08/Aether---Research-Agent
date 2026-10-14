@@ -13,6 +13,7 @@ import {
 import { Brand } from "@/components/brand";
 import { ResearchPreview } from "@/components/research-preview";
 import { LandingThemeToggle } from "@/components/landing-theme-toggle";
+import { ScrollReveal } from "@/components/scroll-reveal";
 
 export default function Page() {
   const authConfigured =
@@ -82,8 +83,8 @@ export default function Page() {
             <span className="hero-period">.</span>
           </h1>
           <p className="hero-motion-p">
-            Explore questions, synthesize complex sources, and turn information into
-            evidence-backed answers — all in one focused workspace.
+            Explore questions, synthesize complex sources, and turn information
+            into evidence-backed answers — all in one focused workspace.
           </p>
           <div className="landing-actions hero-motion-actions">
             <Link className="landing-cta" href="/research">
@@ -156,102 +157,108 @@ export default function Page() {
           </div>
         </div>
       </section>
-      <section
-        className="landing-product"
-        id="workspace"
-        aria-label="Explore the research workspace"
-      >
-        <div className="product-caption">
-          <span>
-            <span className="status-dot live" /> A space to think, with
-            everything in reach
-          </span>
-          <span>
-            Explore the example below <ArrowRight size={13} />
-          </span>
-        </div>
-        <ResearchPreview />
-        <div className="product-bottom">
-          <span>One question. Connected sources. A clearer picture.</span>
-          <Link href="/research">
-            Make it your workspace <ArrowUpRight size={14} />
-          </Link>
-        </div>
-      </section>
-      <section className="landing-method" id="how-it-works">
-        <div className="landing-section-title">
-          <span className="eyebrow">The research process</span>
-          <h2>
-            Less searching.
-            <br />
-            More understanding.
-          </h2>
-          <p>
-            A thoughtful path from the material you have to the answers you
-            need.
-          </p>
-        </div>
-        <div className="method-list">
-          {[
-            {
-              n: "01",
-              icon: Layers3,
-              title: "Give your research a home.",
-              text: "Create a workspace for each project. Bring PDFs, documents, and notes together in a library you can return to.",
-            },
-            {
-              n: "02",
-              icon: Globe2,
-              title: "Ask. Explore. Go deeper.",
-              text: "Choose an AI research model and set the minimum document relevance beside it, starting at 50%. Crebry checks whether the accepted evidence covers your question and explores web sources when there is a gap.",
-            },
-            {
-              n: "03",
-              icon: BookOpen,
-              title: "See the thinking behind the answer.",
-              text: "Read a focused answer with source references. Inspect the original passages, review the research process, and keep asking better questions.",
-            },
-          ].map((item) => (
-            <article key={item.n}>
-              <span className="method-number">{item.n}</span>
-              <div>
-                <h3>{item.title}</h3>
-                <p>{item.text}</p>
-              </div>
-              <item.icon size={20} />
-            </article>
-          ))}
-        </div>
-      </section>
-      <section className="landing-private" id="your-space">
-        <div>
-          <span className="eyebrow">Room for your next question</span>
-          <h2>
-            Your work, connected.
-            <br />
-            Your thinking, clearer.
-          </h2>
-        </div>
-        <div>
-          <p>
-            Keep documents, conversations, and discoveries together in your
-            personal research workspace. Pick up where you left off.
-          </p>
-          <Link className="landing-cta" href="/research">
-            Start researching <ArrowUpRight size={16} />
-          </Link>
-          <details className="privacy-details">
-            <summary>How Crebry works with your information</summary>
+      <ScrollReveal>
+        <section
+          className="landing-product"
+          id="workspace"
+          aria-label="Explore the research workspace"
+        >
+          <div className="product-caption">
+            <span>
+              <span className="status-dot live" /> A space to think, with
+              everything in reach
+            </span>
+            <span>
+              Explore the example below <ArrowRight size={13} />
+            </span>
+          </div>
+          <ResearchPreview />
+          <div className="product-bottom">
+            <span>One question. Connected sources. A clearer picture.</span>
+            <Link href="/research">
+              Make it your workspace <ArrowUpRight size={14} />
+            </Link>
+          </div>
+        </section>
+      </ScrollReveal>
+      <ScrollReveal>
+        <section className="landing-method" id="how-it-works">
+          <div className="landing-section-title">
+            <span className="eyebrow">The research process</span>
+            <h2>
+              Less searching.
+              <br />
+              More understanding.
+            </h2>
             <p>
-              Documents and conversations belong to your account. Document
-              embeddings run locally on the server. Relevant passages and
-              questions are sent to Gemini; search queries are sent to Tavily.
-              Source checks help you inspect answers but cannot guarantee every
-              claim is correct.
+              A thoughtful path from the material you have to the answers you
+              need.
             </p>
-          </details>
-        </div>
-      </section>
+          </div>
+          <div className="method-list">
+            {[
+              {
+                n: "01",
+                icon: Layers3,
+                title: "Give your research a home.",
+                text: "Create a workspace for each project. Bring PDFs, documents, and notes together in a library you can return to.",
+              },
+              {
+                n: "02",
+                icon: Globe2,
+                title: "Ask. Explore. Go deeper.",
+                text: "Choose an AI research model and set the minimum document relevance beside it, starting at 50%. Crebry checks whether the accepted evidence covers your question and explores web sources when there is a gap.",
+              },
+              {
+                n: "03",
+                icon: BookOpen,
+                title: "See the thinking behind the answer.",
+                text: "Read a focused answer with source references. Inspect the original passages, review the research process, and keep asking better questions.",
+              },
+            ].map((item) => (
+              <article key={item.n}>
+                <span className="method-number">{item.n}</span>
+                <div>
+                  <h3>{item.title}</h3>
+                  <p>{item.text}</p>
+                </div>
+                <item.icon size={20} />
+              </article>
+            ))}
+          </div>
+        </section>
+      </ScrollReveal>
+      <ScrollReveal>
+        <section className="landing-private" id="your-space">
+          <div>
+            <span className="eyebrow">Room for your next question</span>
+            <h2>
+              Your work, connected.
+              <br />
+              Your thinking, clearer.
+            </h2>
+          </div>
+          <div>
+            <p>
+              Keep documents, conversations, and discoveries together in your
+              personal research workspace. Pick up where you left off.
+            </p>
+            <Link className="landing-cta" href="/research">
+              Start researching <ArrowUpRight size={16} />
+            </Link>
+            <details className="privacy-details">
+              <summary>How Crebry works with your information</summary>
+              <p>
+                Documents and conversations belong to your account. Document
+                embeddings run locally on the server. Relevant passages and
+                questions are sent to Gemini; search queries are sent to Tavily.
+                Source checks help you inspect answers but cannot guarantee
+                every claim is correct.
+              </p>
+            </details>
+          </div>
+        </section>
+      </ScrollReveal>
       <footer className="landing-footer">
         <Link className="landing-logo" href="/" aria-label="Crebry home">
           <Brand />

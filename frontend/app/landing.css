@@ -85,7 +85,7 @@
 }
 .landing-hero {
   display: grid;
-  grid-template-columns: 1.15fr 1fr;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   align-items: center;
   gap: 80px;
   padding-top: 44px;
@@ -100,6 +100,10 @@
   margin-bottom: 26px;
   animation: hero-fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+.hero-copy,
+.hero-notebook-wrapper {
+  min-width: 0;
+}
 .kicker-pulse-dot,
 .badge-pulse-dot {
   width: 6px;
@@ -110,7 +114,8 @@
   animation: pulse-glow 2.4s ease-in-out infinite;
 }
 @keyframes pulse-glow {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.35;
     transform: scale(0.85);
   }
@@ -135,6 +140,11 @@
   animation: hero-fade-up 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both;
 }
 .motion-gradient-text {
+  display: inline-block;
+  line-height: 1.2;
+  padding: 0 0.08em 0.14em 0;
+  margin: 0 -0.08em -0.14em 0;
+  vertical-align: baseline;
   background: linear-gradient(
     135deg,
     var(--text) 0%,
@@ -146,6 +156,19 @@
   -webkit-text-fill-color: transparent;
   background-size: 250% auto;
   animation: text-shimmer 7s linear infinite;
+}
+.scroll-reveal.is-revealed {
+  animation: section-reveal 550ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes section-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 @keyframes text-shimmer {
   0% {
@@ -189,7 +212,10 @@
   min-height: 48px;
   font-size: 13px;
   font-weight: 550;
-  transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+  transition:
+    transform 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
 }
 .landing-cta:hover {
   background: var(--accent-bright);
@@ -202,7 +228,9 @@
   gap: 10px;
   font-size: 12px;
   color: var(--soft);
-  transition: color 180ms ease, transform 180ms ease;
+  transition:
+    color 180ms ease,
+    transform 180ms ease;
 }
 .secondary-link:hover {
   color: var(--text);
@@ -237,7 +265,7 @@
 }
 .hero-ambient-glow {
   position: absolute;
-  inset: -25px;
+  inset: 0;
   background: radial-gradient(
     ellipse 60% 50% at 50% 50%,
     rgba(255, 255, 255, 0.08),
@@ -256,7 +284,8 @@
   );
 }
 @keyframes ambient-glow {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.45;
     transform: scale(0.95);
   }
@@ -272,16 +301,23 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 25px 28px 0;
-  box-shadow: 0 20px 45px -15px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--border);
+  box-shadow:
+    0 20px 45px -15px rgba(0, 0, 0, 0.25),
+    0 0 0 1px var(--border);
   animation: float-hero 6.5s ease-in-out infinite;
-  transition: box-shadow 300ms ease, border-color 300ms ease;
+  transition:
+    box-shadow 300ms ease,
+    border-color 300ms ease;
 }
 .hero-notebook:hover {
   border-color: var(--edge);
-  box-shadow: 0 30px 60px -18px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--edge);
+  box-shadow:
+    0 30px 60px -18px rgba(0, 0, 0, 0.35),
+    0 0 0 1px var(--edge);
 }
 @keyframes float-hero {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0px) rotate(0deg);
   }
   50% {
@@ -303,7 +339,9 @@
   font-size: 11px;
   font-weight: 500;
   color: var(--text);
-  box-shadow: 0 12px 28px -5px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow:
+    0 12px 28px -5px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   pointer-events: none;
@@ -320,7 +358,8 @@
   animation: float-badge-bottom 7s ease-in-out infinite;
 }
 @keyframes float-badge-top {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0px) rotate(0deg);
   }
   50% {
@@ -328,7 +367,8 @@
   }
 }
 @keyframes float-badge-bottom {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0px) rotate(0deg);
   }
   50% {
@@ -380,7 +420,9 @@
   padding: 14px 10px;
   border-top: 1px solid var(--border);
   border-radius: 6px;
-  transition: transform 180ms ease, background-color 180ms ease;
+  transition:
+    transform 180ms ease,
+    background-color 180ms ease;
   cursor: default;
 }
 .notebook-source:hover {
@@ -389,7 +431,9 @@
 }
 .notebook-source > svg {
   color: var(--muted);
-  transition: transform 200ms ease, color 200ms ease;
+  transition:
+    transform 200ms ease,
+    color 200ms ease;
 }
 .notebook-source:hover > svg {
   transform: scale(1.15);
@@ -463,7 +507,10 @@
   min-height: 548px;
   overflow: hidden;
   box-shadow: 0 20px 50px -15px rgba(0, 0, 0, 0.35);
-  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 300ms cubic-bezier(0.16, 1, 0.3, 1), border-color 250ms ease;
+  transition:
+    transform 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 250ms ease;
 }
 .product-preview:hover {
   transform: translateY(-4px);
@@ -845,7 +892,9 @@
   padding: 24px 14px;
   border-top: 1px solid var(--border);
   border-radius: 8px;
-  transition: transform 200ms ease, background-color 200ms ease;
+  transition:
+    transform 200ms ease,
+    background-color 200ms ease;
   cursor: default;
 }
 .method-list article:hover {
@@ -876,7 +925,9 @@
 .method-list article > svg {
   color: var(--muted);
   margin-left: auto;
-  transition: transform 200ms ease, color 200ms ease;
+  transition:
+    transform 200ms ease,
+    color 200ms ease;
 }
 .method-list article:hover > svg {
   transform: scale(1.15);
@@ -1062,7 +1113,7 @@
     gap: 36px;
   }
   .hero-copy h1 {
-    font-size: 53px;
+    font-size: clamp(42px, 12vw, 53px);
   }
   .hero-kicker {
     font-size: 10px;

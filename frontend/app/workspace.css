@@ -1,4 +1,48 @@
 /* Research shell: restrained navigation, open reading space, legible metadata. */
+.documents-view,
+.intelligence-heading {
+  animation: workspace-enter 260ms ease-out both;
+}
+@keyframes workspace-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.nav-item,
+.recent-item > button,
+.document-card,
+.inline-citation,
+.web-source,
+.answer-sources > button,
+.model-picker-controls > button {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .document-card:hover,
+  .answer-sources > button:hover {
+    border-color: var(--edge);
+    box-shadow: 0 2px 8px #0000000d;
+  }
+  .inline-citation:hover,
+  .web-source:hover,
+  .model-picker-controls > button:hover {
+    background: var(--accent-wash);
+    color: var(--text);
+  }
+}
+.document-card:focus-within,
+.answer-sources > button:focus-visible {
+  border-color: var(--edge);
+}
 .workspace-loading {
   display: grid;
   grid-template-columns: 244px minmax(0, 1fr);
