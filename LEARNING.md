@@ -2481,15 +2481,12 @@ another computer install Python 3.12 and recreate the venv; do not copy it.
 From `backend` on a fresh installation:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.lock.txt
+uv sync --frozen
 ```
 
-`pip` installs Python packages. `-r` means “read this requirements file.” The lock
-file records exact versions verified here. The separate `requirements.txt`
-contains compatible ranges for an upgrade or platform-specific resolution.
+`pyproject.toml` defines dependencies and optional profiles. `uv.lock` pins versions and artifact hashes; `uv sync --frozen` installs that resolution. Docker omits development dependencies and optional local embeddings.
 
-The initial install can be large because local embeddings require PyTorch.
-The first embedding operation also downloads MiniLM model files.
+Local embeddings are optional: `uv sync --frozen --extra local` installs the CPU PyTorch profile. The default Gemini profile excludes it. The first local embedding operation downloads MiniLM model files.
 
 ### Configure keys
 

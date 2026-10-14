@@ -42,9 +42,12 @@ between 0 and 1 in `/api/chat/stream`; omitting it retains the server default.
 
 Research continues when you switch between Research and Documents, visit another
 app page through its links, or switch browser tabs. Return to Research to see the
-ongoing draft or completed answer. Stop still cancels the active request; signing
-out or changing accounts cancels it and clears private state. A full reload,
-closing the tab, or losing the connection can still interrupt the stream.
+ongoing draft or completed answer. Stop requests cancellation of the saved backend job; signing
+out or changing accounts detaches the browser and clears private state. Backend jobs continue; reopen the saved conversation to resume progress after a reload or disconnect.
+
+## Local reliability and Docker
+
+See [the reliability report](docs/reliability-report.md) for verified changes, `docker.yml` usage, dependency profiles, storage requirements, safe recovery and rollback. Docker builds install the frozen `uv.lock` production profile; development tools and local CPU embeddings are excluded.
 
 ## Setup on this Windows computer
 
@@ -52,7 +55,7 @@ The Python virtual environment already exists at `backend/.venv`. Its runtime is
 Python 3.12.14 from the Codex desktop bundle because the Windows Python launcher
 was unavailable. Use its executable directly; activation is optional.
 For another machine, install Python 3.12 and Node.js 24 LTS, recreate the venv,
-install `requirements.lock.txt` on Windows, and run `npm ci` in frontend.
+use `uv sync --frozen` in backend, and run `npm ci` in frontend. Backend dependencies are defined in `pyproject.toml` and pinned in `uv.lock`.
 
 ### 1. Connect Clerk
 
@@ -141,7 +144,7 @@ Terminal one:
 
 ```powershell
 cd C:\Users\91991\Desktop\crag\aether-research\backend
-.\.venv\Scripts\python.exe -m pip install -r requirements.lock.txt
+uv sync --frozen
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 

@@ -15,7 +15,10 @@ class VectorStore:
     """One persistent collection per workspace; the local model loads lazily and safely."""
 
     def __init__(self, data_dir, model_name, embedder=None):
-        self.client = chromadb.PersistentClient(path=str(data_dir / "chroma"))
+        self.client = chromadb.HttpClient(
+            host=config.chroma_host, port=config.chroma_port, ssl=config.chroma_ssl,
+            headers={"Authorization": f"Bearer {config.chroma_auth_token}"} if config.chroma_auth_token else None,
+        ) if config.chroma_host else chromadb.PersistentClient(path=str(data_dir / "chroma"))
         self.model_name = model_name
         self.model_cache = str(data_dir / "models")
         self.model = embedder
@@ -24,7 +27,9 @@ class VectorStore:
     @property
     def is_gemini_active(self) -> bool:
         if config.embedding_provider == "gemini":
-            return bool(config.gemini_api_key)
+            if not config.gemini_api_key:
+                raise ValueError("EMBEDDING_PROVIDER=gemini requires GEMINI_API_KEY. Local embeddings will not be loaded implicitly.")
+            return True
         if config.embedding_provider == "auto":
             return bool(config.gemini_api_key)
         return False
@@ -49,7 +54,16 @@ class VectorStore:
                     model="models/gemini-embedding-001",
                     google_api_key=config.gemini_api_key,
                     output_dimensionality=768,
+                    vertexai=False,
                 )
+                # This integration currently ignores its request_options field.
+                # Configure the public GenAI client explicitly: no hidden retries or Vertex billing.
+                if hasattr(loaded, "client"):
+                    from google import genai
+                    from google.genai.types import HttpOptions, HttpRetryOptions
+                    loaded.client.close()
+                    loaded.client = genai.Client(api_key=config.gemini_api_key, vertexai=False,
+                        http_options=HttpOptions(timeout=30000, retry_options=HttpRetryOptions(attempts=1)))
                 _SHARED_EMBEDDER = loaded
                 self.model = loaded
                 log_stage_memory("after_model_load", provider="gemini")
@@ -103,6 +117,13 @@ class VectorStore:
             name=f"ws_{workspace_id}_{tag}", configuration={"hnsw": {"space": "cosine"}}, embedding_function=None
         )
 
+    def embed_query(self, text):
+        model = self._get_model()
+        if hasattr(model, "embed_query"):
+            import numpy as np
+            return np.array([model.embed_query(text)], dtype=np.float32)
+        return self.embed([text])
+
     def index(self, workspace_id, document_id, name, chunks, version):
         """Store document chunks, embeddings, and metadata in ChromaDB in bounded batches."""
         with self.lock:
@@ -143,7 +164,7 @@ class VectorStore:
             if collection.count() == 0:
                 return []
             result = collection.query(
-                query_embeddings=self.embed([question]),
+                query_embeddings=self.embed_query(question),
                 n_results=min(count, collection.count()),
                 include=["documents", "metadatas", "distances"],
             )

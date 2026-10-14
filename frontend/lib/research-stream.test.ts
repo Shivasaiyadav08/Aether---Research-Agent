@@ -121,7 +121,7 @@ it("allows the remounted chat's Stop button to cancel the original stream", asyn
   expect(stream.signal().aborted).toBe(true);
   expect(useResearch.getState().streaming).toBe(false);
   expect(useResearch.getState().draft).toBe("");
-  expect(useResearch.getState().error).toContain("Research stopped");
+  expect(useResearch.getState().error).toContain("Cancellation requested");
   expect(
     useResearch
       .getState()

@@ -69,30 +69,30 @@ async function forward(
       }
       body = joined.buffer;
     }
-  
-const startedAt = Date.now();
 
-console.info("[backend-proxy] Upstream request started", {
-  method: request.method,
-  pathname: new URL(url).pathname,
-  hasBody: body !== undefined,
-  bodyBytes: body?.byteLength ?? 0,
-});
+    const startedAt = Date.now();
 
-const response = await fetch(url, {
-  method: request.method,
-  headers,
-  body,
-  cache: "no-store",
-  signal: request.signal,
-});
+    console.info("[backend-proxy] Upstream request started", {
+      method: request.method,
+      pathname: new URL(url).pathname,
+      hasBody: body !== undefined,
+      bodyBytes: body?.byteLength ?? 0,
+    });
 
-console.info("[backend-proxy] Upstream response received", {
-  method: request.method,
-  pathname: new URL(url).pathname,
-  status: response.status,
-  elapsedMs: Date.now() - startedAt,
-});
+    const response = await fetch(url, {
+      method: request.method,
+      headers,
+      body,
+      cache: "no-store",
+      signal: request.signal,
+    });
+
+    console.info("[backend-proxy] Upstream response received", {
+      method: request.method,
+      pathname: new URL(url).pathname,
+      status: response.status,
+      elapsedMs: Date.now() - startedAt,
+    });
 
     const resultHeaders = new Headers();
     for (const name of [
@@ -100,6 +100,8 @@ console.info("[backend-proxy] Upstream response received", {
       "content-disposition",
       "cache-control",
       "x-accel-buffering",
+      "retry-after",
+      "x-request-id",
     ])
       if (response.headers.has(name))
         resultHeaders.set(name, response.headers.get(name)!);
@@ -108,34 +110,19 @@ console.info("[backend-proxy] Upstream response received", {
       status: response.status,
       headers: resultHeaders,
     });
-
   } catch (error) {
     console.error("[backend-proxy] Upstream fetch failed", {
-      url,
       method: request.method,
-      error:
-        error instanceof Error
-          ? {
-              name: error.name,
-              message: error.message,
-              cause:
-                error.cause instanceof Error
-                  ? error.cause.message
-                  : String(error.cause ?? ""),
-            }
-          : String(error),
+      errorType: error instanceof Error ? error.name : "UnknownError",
     });
 
     return Response.json(
       {
         detail: "Cannot reach the research backend.",
-        diagnostic:
-          error instanceof Error ? error.message : String(error),
       },
       { status: 502 },
     );
   }
-
 }
 export const GET = forward;
 export const POST = forward;

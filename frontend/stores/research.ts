@@ -31,6 +31,9 @@ type ResearchState = {
   sessionId: string;
   models: Model[];
   selectedModel: string;
+  actualModel: string;
+  automaticFallback: boolean;
+  runId: string | null;
   relevanceThreshold: number;
   modelNotice: string;
   error: string;
@@ -62,6 +65,9 @@ export const useResearch = create<ResearchState>((set) => ({
   sessionId: "",
   models: [],
   selectedModel: "",
+  actualModel: "",
+  automaticFallback: true,
+  runId: null,
   relevanceThreshold: 0.5,
   modelNotice: "",
   error: "",
@@ -80,6 +86,8 @@ export const useResearch = create<ResearchState>((set) => ({
     set({
       view: "research",
       conversationId: null,
+      runId: null,
+      actualModel: "",
       messages: [],
       events: [],
       draft: "",
@@ -110,16 +118,26 @@ export const useResearch = create<ResearchState>((set) => ({
         (event.type === "model_selected" || event.type === "model_fallback") &&
         event.model
       )
-        patch.selectedModel = event.model;
+        patch.actualModel = event.model;
       if (event.type !== "token") patch.events = [...state.events, event];
-      if (event.type === "start") patch.conversationId = event.conversation_id!;
+      if (event.type === "start") {
+        patch.conversationId = event.conversation_id!;
+        patch.runId = event.run_id ?? null;
+        patch.error = "";
+        patch.draft = "";
+      }
       if (event.type === "answer_reset") patch.draft = "";
       if (event.type === "token") patch.draft = state.draft + event.text;
       if (event.type === "final") {
         patch.draft = "";
         patch.warnings = event.warnings ?? [];
         if (event.message && typeof event.message !== "string")
-          patch.messages = [...state.messages, event.message];
+          patch.messages = [
+            ...state.messages.filter(
+              (message) => message.id !== (event.message as Message).id,
+            ),
+            event.message,
+          ];
       }
       if (event.type === "error") {
         patch.error = String(event.message);

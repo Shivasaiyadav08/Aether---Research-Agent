@@ -40,6 +40,7 @@ class AnswerValidation(BaseModel):
 
 
 class GraphState(TypedDict, total=False):
+    resume_node: str
     question: str
     workspace_id: str
     settings: dict

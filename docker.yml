@@ -1,0 +1,44 @@
+# Local orchestration only. Frontend production can continue to run on Vercel.
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      ENVIRONMENT: development
+      DATA_DIR: /var/data/crebry
+      PORT: "8000"
+      EMBEDDING_PROVIDER: gemini
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - crebry-data:/var/data
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+  frontend:
+    profiles: [frontend]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+    env_file:
+      - path: ./frontend/.env.local
+        required: false
+    environment:
+      BACKEND_API_URL: http://backend:8000/api
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    init: true
+    restart: unless-stopped
+volumes:
+  crebry-data:

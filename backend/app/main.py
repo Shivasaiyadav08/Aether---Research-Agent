@@ -11,18 +11,25 @@ from app.agents.graph import build_graph
 from app.api.routes import router
 from app.core.config import config
 from app.core.memory import configure_process_memory_environment
-from app.models.database import AppSettings, WorkflowRun, create_database
+from app.models.database import AppSettings, ResearchJob, WorkflowRun, create_database
 from app.services.vector import VectorStore
+from app.services.routing import RoutingStore
+from app.services.jobs import JobManager
+from app.core.readiness import check_production_configuration
+from app.services.documents import configure_ocr_router
 
 configure_process_memory_environment()
 
 
 @asynccontextmanager
 async def lifespan(app):
-    engine, db_factory = create_database(config.data_dir)
+    check_production_configuration()
+    engine, db_factory = create_database(config.data_dir, config.database_url or None)
     app.state.db = db_factory
     app.state.vectors = VectorStore(config.data_dir, config.embedding_model)
-    app.state.graph = build_graph(app.state.vectors)
+    app.state.routing = RoutingStore(db_factory, config.gemini_project_id)
+    configure_ocr_router(app.state.routing)
+    app.state.graph = build_graph(app.state.vectors, app.state.routing)
     app.state.mutation_lock = RLock()
     app.state.embedding_semaphore = BoundedSemaphore(config.max_concurrent_embeddings)
     app.state.active_workspaces = {}
@@ -31,11 +38,19 @@ async def lifespan(app):
             db.add(AppSettings(id=1, model=config.gemini_model))
         # A process restart cannot resume a provider stream; mark interrupted runs honestly.
         for run in db.scalars(select(WorkflowRun).where(WorkflowRun.status == "running")):
+            if db.get(ResearchJob, run.id) is not None:
+                continue
             run.status = "interrupted"
             run.error = "Backend restarted before this answer completed. Regenerate the question."
         db.commit()
-    yield
-    engine.dispose()
+    app.state.jobs = JobManager(db_factory, lambda: app.state.graph)
+    await app.state.jobs.start()
+    try:
+        yield
+    finally:
+        await app.state.jobs.close()
+        configure_ocr_router(None)
+        engine.dispose()
 
 
 app = FastAPI(title="Aether Research", version="1.0.0", lifespan=lifespan)

@@ -1,10 +1,21 @@
 import numpy as np
 import pymupdf
+import pytest
 
 from app.core.config import config
 from app.services import storage
 from app.services.documents import extract_text
 from app.services.vector import VectorStore
+
+
+@pytest.fixture(autouse=True)
+def offline_ocr_catalog(monkeypatch):
+    def catalog():
+        return [{"id": model, "name": model, "available": True, "free_tier_eligible": True,
+                 "context_length": 1000000, "output_token_limit": 65536,
+                 "supported_parameters": ["vision", "streaming", "structured_outputs"]}
+                for model in dict.fromkeys([config.gemini_ocr_model, "gemini-3.1-flash-lite", "gemini-3.8-flash"])]
+    monkeypatch.setattr("app.services.free_models.get_free_models_sync", catalog)
 
 
 def test_storage_local_fallback(tmp_path, monkeypatch):
@@ -215,7 +226,9 @@ def test_gemini_ocr_model_fallback(tmp_path, monkeypatch):
 
     class BadLLM:
         def invoke(self, messages):
-            raise RuntimeError("Model unavailable")
+            error = RuntimeError("Model unavailable")
+            error.code = 404
+            raise error
 
     class GoodLLM:
         def invoke(self, messages):

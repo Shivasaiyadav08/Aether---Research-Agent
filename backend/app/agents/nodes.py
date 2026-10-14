@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.config import get_stream_writer
 
 from app.agents.state import AnswerValidation, EvidenceAssessment, RelevanceBatch, RewrittenQuery
+from app.core.config import config
 from app.services.ai import (
     UNTRUSTED_RULE,
     IncompleteAnswer,
@@ -61,7 +62,7 @@ def provider_failed(error: Exception) -> bool:
 
 
 # Creates and returns the agent's workflow node functions.
-def make_nodes(vectors):
+def make_nodes(vectors, routing_store=None):
     """Functions close over the vector store. The graph state contains only request data."""
 
     # Reports when the application switches models or runs out of fallback options.
@@ -82,10 +83,16 @@ def make_nodes(vectors):
     # Makes structured AI calls and handles configured model fallbacks.
     async def ask(state, schema, instruction, data):
         async def operation(model):
+            emit("model_selected", model=model)
             return await structured_call(model, schema, instruction, data)
 
         if state.get("model_plan"):
-            return await call_with_free_fallback(state["model_plan"], operation, model_fallback)
+            return await call_with_free_fallback(
+                state["model_plan"], operation, model_fallback, store=routing_store,
+                task=schema.__name__,
+                input_tokens=len((UNTRUSTED_RULE + instruction + json.dumps(data, ensure_ascii=False) + json.dumps(schema.model_json_schema())).encode("utf-8")),
+                output_tokens=config.gemini_structured_max_output_tokens,
+            )
         return await operation(state["settings"]["model"])
 
     # Searches the vector store for relevant document chunks.
@@ -203,6 +210,11 @@ def make_nodes(vectors):
     async def rewrite(state):
         started = start_node("rewrite")
         warnings = list(state.get("warnings", []))
+        if not config.tavily_api_key:
+            query = state["question"]
+            emit("rewrite", query=query)
+            finish_node("rewrite", started, query=query, skipped_llm="Web search is not configured.")
+            return {"rewritten_query": query, "warnings": warnings}
         try:
             result = await ask(
                 state,
@@ -288,6 +300,7 @@ def make_nodes(vectors):
             )
 
             async def stream_model(model):
+                emit("model_selected", model=model)
                 parts = []
                 # A provider failure after partial tokens must replace that provisional draft.
                 emit("answer_reset", attempt=attempts, model=model)
@@ -303,7 +316,10 @@ def make_nodes(vectors):
                 return "".join(parts)
 
             if state.get("model_plan"):
-                answer = await call_with_free_fallback(state["model_plan"], stream_model, model_fallback)
+                answer = await call_with_free_fallback(
+                    state["model_plan"], stream_model, model_fallback, store=routing_store,
+                    task="generate", input_tokens=sum(len(str(message.content).encode("utf-8")) for message in messages),
+                )
             else:
                 answer = await stream_model(state["settings"]["model"])
             if not answer.strip():

@@ -6,8 +6,15 @@ import { useResearch } from "@/stores/research";
 import type { Model } from "@/types";
 
 export function FreeModelPicker() {
-  const { models, selectedModel, streaming, modelNotice, update } =
-    useResearch();
+  const {
+    models,
+    selectedModel,
+    actualModel,
+    automaticFallback,
+    streaming,
+    modelNotice,
+    update,
+  } = useResearch();
   const [loading, setLoading] = useState(false);
   const hasCooldowns = models.some((model) => model.available === false);
   useEffect(() => {
@@ -54,9 +61,14 @@ export function FreeModelPicker() {
         value={selectedModel}
         disabled={streaming || loading || !models.length}
         onChange={(event) =>
-          update({ selectedModel: event.target.value, modelNotice: "" })
+          update({
+            selectedModel: event.target.value,
+            automaticFallback: event.target.value === "auto",
+            modelNotice: "",
+          })
         }
       >
+        <option value="auto">Automatic selection</option>
         {!selectedModel && (
           <option value="">No eligible Gemini model ready</option>
         )}
@@ -79,6 +91,20 @@ export function FreeModelPicker() {
           </option>
         ))}
       </select>
+      <label title="Allow another verified free-tier model when the selected model fails">
+        <input
+          type="checkbox"
+          checked={automaticFallback}
+          disabled={streaming || selectedModel === "auto"}
+          onChange={(event) =>
+            update({ automaticFallback: event.target.checked })
+          }
+        />
+        Auto fallback
+      </label>
+      {actualModel && actualModel !== selectedModel && (
+        <span role="status">Using {actualModel}</span>
+      )}
       <button
         type="button"
         aria-label="Refresh free models"

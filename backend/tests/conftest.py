@@ -36,6 +36,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "data_dir", tmp_path)
     monkeypatch.setattr(config, "gemini_api_key", "")
     monkeypatch.setattr(config, "tavily_api_key", "")
+    monkeypatch.setattr(config, "gemini_free_rpm", 1000)
+    monkeypatch.setattr(config, "gemini_free_rpd", 10000)
     monkeypatch.setattr(
         "app.main.VectorStore", lambda directory, model: VectorStore(directory, model, TestEmbedder())
     )
@@ -49,6 +51,10 @@ def client(tmp_path, monkeypatch):
                 "id": "gemini-test-flash",
                 "name": "Test free model",
                 "pricing": {"prompt": "0", "completion": "0"},
+                "free_tier_eligible": True,
+                "context_length": 1000000,
+                "output_token_limit": 65536,
+                "supported_parameters": ["structured_outputs", "streaming"],
             }
         ]
 

@@ -1,3 +1,7 @@
+# Local production-reliability changes (2026-10-14)
+
+See [the current reliability report](docs/reliability-report.md). Full local backend suite: 133 passed. Frontend: 21 tests, type checking, lint and production build passed. Docker/physical-device/production benchmarks remain unverified. Older entries below are historical.
+
 # Verification — Gemini migration
 
 ## Navigation-safe research checks (2026-10-10)

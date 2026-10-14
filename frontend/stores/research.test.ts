@@ -9,13 +9,14 @@ it("keeps the relevance choice for new chats and resets it with the session", ()
   useResearch.setState(useResearch.getInitialState(), true);
   expect(useResearch.getState().relevanceThreshold).toBe(0.5);
 });
-it("shows a real fallback and changes the chosen model", () => {
+it("shows the actual fallback model without changing the user selection", () => {
   useResearch.getState().receiveEvent({
     type: "model_fallback",
     model: "gemini-next-flash",
     message: "First model unavailable. Switching to another free model.",
   });
-  expect(useResearch.getState().selectedModel).toBe("gemini-next-flash");
+  expect(useResearch.getState().actualModel).toBe("gemini-next-flash");
+  expect(useResearch.getState().selectedModel).toBe("");
   expect(useResearch.getState().modelNotice).toContain("unavailable");
   expect(useResearch.getState().events[0].type).toBe("model_fallback");
 });
@@ -41,7 +42,7 @@ it("marks the failed Gemini model unavailable while retaining alternatives", () 
   });
   expect(useResearch.getState().models[0].available).toBe(false);
   expect(useResearch.getState().models[1].available).toBe(true);
-  expect(useResearch.getState().selectedModel).toBe("gemini-next");
+  expect(useResearch.getState().actualModel).toBe("gemini-next");
 });
 it("replaces provisional text after a generation or provider retry", () => {
   useResearch

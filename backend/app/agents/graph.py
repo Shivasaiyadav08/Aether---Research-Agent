@@ -16,12 +16,23 @@ def validation_route(state: GraphState) -> str:
     return "finalize"
 
 
-def build_graph(vectors):
+def next_node(node: str, state: dict) -> str:
+    """Checkpoint the same conditional transitions used by the graph."""
+    if node == "assess":
+        return evidence_route(state)
+    if node == "validate":
+        return validation_route(state)
+    return {"retrieve": "grade", "grade": "assess", "rewrite": "web_search",
+            "web_search": "generate", "generate": "validate", "finalize": "end"}[node]
+
+
+def build_graph(vectors, routing_store=None):
     """One real graph. Conditional edges are driven by the node results."""
     graph = StateGraph(GraphState)
-    for name, function in make_nodes(vectors).items():
+    for name, function in make_nodes(vectors, routing_store).items():
         graph.add_node(name, function)
-    graph.add_edge(START, "retrieve")
+    graph.add_conditional_edges(START, lambda state: state.get("resume_node", "retrieve"),
+                               {name: name for name in make_nodes(vectors, routing_store)})
     graph.add_edge("retrieve", "grade")
     graph.add_edge("grade", "assess")
     graph.add_conditional_edges("assess", evidence_route, {"generate": "generate", "rewrite": "rewrite"})

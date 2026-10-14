@@ -54,8 +54,26 @@ class Config(BaseSettings):
     tavily_api_key: str = ""
     clerk_secret_key: str = ""
     clerk_jwt_key: str = ""
+    clerk_issuer: str = ""
     clerk_authorized_parties: str = "http://localhost:3000,http://127.0.0.1:3000"
     gemini_model: str = "auto"
+    gemini_project_id: str = "local"
+    gemini_retry_rounds: int = Field(default=1, ge=0, le=1)
+    gemini_max_concurrency: int = Field(default=2, ge=1, le=8)
+    gemini_free_rpm: int = Field(default=5, ge=1, le=1000)
+    gemini_free_rpd: int = Field(default=20, ge=1, le=10000)
+    gemini_free_tpm: int = Field(default=125000, ge=8192, le=2000000)
+    research_timeout_seconds: float = Field(default=240, ge=30, le=600)
+    max_research_jobs: int = Field(default=2, ge=1, le=8)
+    user_requests_per_minute: int = Field(default=120, ge=10, le=1000)
+    database_url: str = ""
+    environment: str = Field(default="development", pattern=r"^(development|test|production)$")
+    persistent_data_root: Path | None = None
+    gemini_free_project_confirmed: bool = False
+    chroma_host: str = ""
+    chroma_port: int = Field(default=8000, ge=1, le=65535)
+    chroma_ssl: bool = True
+    chroma_auth_token: str = ""
     gemini_max_model_attempts: int = Field(default=3, ge=1, le=8)
     gemini_operation_timeout_seconds: float = Field(default=75, ge=1, le=180)
     gemini_structured_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
@@ -78,7 +96,7 @@ class Config(BaseSettings):
     embedding_provider: str = Field(default="auto", pattern=r"^(auto|local|gemini)$")
     # Gemini Cloud OCR for scanned PDFs (uses existing GEMINI_API_KEY)
     gemini_ocr_enabled: bool = Field(default=True)
-    gemini_ocr_model: str = "gemini-2.0-flash"
+    gemini_ocr_model: str = "gemini-3.1-flash-lite"
 
 
 config = Config()

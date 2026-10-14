@@ -25,6 +25,7 @@ import type { Source } from "@/types";
 import { FreeModelPicker } from "@/components/free-model-picker";
 import { RelevancePicker } from "@/components/relevance-picker";
 import { BrandMark } from "@/components/brand";
+import { recoverResearch } from "@/lib/research-stream";
 
 export function Answer({
   content,
@@ -104,6 +105,7 @@ export function Chat() {
     workspaces,
     workspaceId,
     conversations,
+    runId,
     update,
   } = useResearch();
   const { send, stop } = useChat();
@@ -353,6 +355,11 @@ export function Chat() {
         {error && (
           <div className="alert" role="alert">
             {error}
+            {runId && !streaming && (
+              <button type="button" onClick={() => void recoverResearch()}>
+                Resume saved research
+              </button>
+            )}
             <button
               onClick={() => update({ error: "" })}
               aria-label="Dismiss error"

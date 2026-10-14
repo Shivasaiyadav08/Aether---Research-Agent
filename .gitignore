@@ -1,6 +1,16 @@
 .env
 .env.local
 .venv/
+.uv-cache/
+*.egg-info/
+backend/dist/
+backend/build/
+frontend/out/
+frontend/.next/
+coverage/
+.coverage
+*.db-wal
+*.db-shm
 __pycache__/
 .pytest_cache/
 .ruff_cache/

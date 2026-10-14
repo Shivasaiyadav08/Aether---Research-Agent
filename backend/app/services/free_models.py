@@ -97,6 +97,14 @@ def model_rank(item: dict):
     return (-major, -minor, family, "preview" in model_id or "exp" in model_id, model_id)
 
 
+def supported_parameters(model_id: str) -> list[str]:
+    # Reviewed Developer API families: unknown families require a compatibility review.
+    # Pricing and authenticated Models.list still determine eligibility independently.
+    if re.match(r"^gemini-(?:2\.5|3(?:\.[15678])?)-(?:pro|flash)", model_id):
+        return ["structured_outputs", "streaming", "vision"]
+    return []
+
+
 def mark_model_unavailable(model: str, seconds: int = 60):
     reset_key_cooldowns()
     _cooldowns[model] = monotonic() + seconds
@@ -115,6 +123,51 @@ def model_availability(model: str) -> dict:
 
 def availability(models: list[dict]) -> list[dict]:
     return [{**item, **model_availability(item["id"])} for item in models]
+
+
+def get_free_models_sync() -> list[dict]:
+    """Bounded synchronous discovery for OCR workers, without crossing event loops."""
+    global _catalog, _expires, _catalog_key
+    if not config.gemini_api_key:
+        raise ValueError("Gemini is not configured.")
+    if _catalog and _catalog_key == config.gemini_api_key and monotonic() < _expires:
+        return availability(_catalog)
+    deadline, token, seen, items = monotonic() + 30, None, set(), []
+    with httpx.Client(timeout=20, follow_redirects=True) as client:
+        response = client.get(PRICING_URL)
+        response.raise_for_status()
+        eligible = free_tier_ids(response.text)
+        for _ in range(10):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Gemini catalog deadline reached.")
+            response = client.get(f"{GEMINI_API_URL}/models", headers={"x-goog-api-key": config.gemini_api_key},
+                                  params={"pageSize": 1000, **({"pageToken": token} if token else {})}, timeout=remaining)
+            response.raise_for_status()
+            data = response.json()
+            items.extend(data.get("models", []))
+            token = data.get("nextPageToken")
+            if not token:
+                break
+            if token in seen:
+                raise ValueError("Repeated Gemini model page token.")
+            seen.add(token)
+        else:
+            raise ValueError("Gemini model catalog exceeded the page limit.")
+    models = [catalog_entry(item) for item in items if is_free_text_model(item, eligible)]
+    models = sorted({item["id"]: item for item in models}.values(), key=model_rank)
+    if not models:
+        raise ValueError("No verified free-tier Gemini models are accessible.")
+    _catalog, _expires, _catalog_key = models, monotonic() + 300, config.gemini_api_key
+    return availability(models)
+
+
+def catalog_entry(item):
+    model_id = item["name"].removeprefix("models/")
+    return {"id": model_id, "name": item.get("displayName", item["name"]),
+            "context_length": item.get("inputTokenLimit", 0), "output_token_limit": item.get("outputTokenLimit", 0),
+            "supported_parameters": supported_parameters(model_id),
+            "pricing": {"prompt": "0", "completion": "0"}, "free_tier_eligible": True}
 
 
 async def get_free_models(*, refresh: bool = False) -> list[dict]:
@@ -151,15 +204,7 @@ async def get_free_models(*, refresh: bool = False) -> list[dict]:
                     raise ValueError("Gemini returned a repeated model page token.")
                 seen_tokens.add(page_token)
         models = [
-            {
-                "id": item["name"].removeprefix("models/"),
-                "name": item.get("displayName", item["name"]),
-                "context_length": item.get("inputTokenLimit", 0),
-                "output_token_limit": item.get("outputTokenLimit", 0),
-                "supported_parameters": ["structured_outputs"],
-                "pricing": {"prompt": "0", "completion": "0"},
-                "free_tier_eligible": True,
-            }
+            catalog_entry(item)
             for item in items
             if is_free_text_model(item, eligible)
         ]

@@ -25,6 +25,14 @@ from app.core.memory import check_and_collect_garbage, log_stage_memory
 from app.models.database import Document, new_id
 from app.services import storage
 
+_ocr_routing_store = None
+
+
+def configure_ocr_router(store):
+    global _ocr_routing_store
+    _ocr_routing_store = store
+
+
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 
 
@@ -63,40 +71,36 @@ def ocr_image_bytes(image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
         ]
     )
 
-    # Try the configured model first, then known-good fallbacks
-    fallback_models = [
-        config.gemini_ocr_model,
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
-    ]
-    seen: set[str] = set()
-    ocr_models = [m for m in fallback_models if not (m in seen or seen.add(m))]  # type: ignore[func-returns-value]
+    from app.services.ai import IncompleteAnswer, call_with_free_fallback, message_text, safe_service_error
+    from app.services.free_models import get_free_models_sync
+    import asyncio
+    from time import time
 
-    for model_name in ocr_models:
-        try:
-            llm = create_llm(model_name)
-            response = llm.invoke([prompt_msg])
-            raw = getattr(response, "content", "") or ""
-            # Gemini may return a list of content blocks instead of a plain string
-            if isinstance(raw, list):
-                text = " ".join(
-                    item.get("text", "") if isinstance(item, dict) else str(item)
-                    for item in raw
-                )
-            else:
-                text = raw
-            text = clean_text(text)
-            if text:
-                if model_name != config.gemini_ocr_model:
-                    logger.info("OCR succeeded with fallback model %s", model_name)
-                return text
-        except Exception as exc:
-            logger.warning("OCR model %s failed: %s — trying next", model_name, exc)
-            continue
+    deadline = time() + 75
+    try:
+        catalog = get_free_models_sync()
+        models = [item["id"] for item in catalog if item.get("available", True) and "vision" in item.get("supported_parameters", [])]
+        if config.gemini_ocr_model in models:
+            models.remove(config.gemini_ocr_model)
+            models.insert(0, config.gemini_ocr_model)
+        plan = {"models": models, "catalog": catalog, "unavailable": [], "deadline_at": deadline}
 
-    logger.error("OCR: all Gemini models exhausted; returning empty string")
-    return ""
+        async def operation(model):
+            response = await asyncio.to_thread(create_llm(model).invoke, [prompt_msg])
+            if getattr(response, "response_metadata", {}).get("finish_reason") == "MAX_TOKENS":
+                raise IncompleteAnswer("OCR output was truncated.")
+            text = clean_text(message_text(response))
+            if not text:
+                raise IncompleteAnswer("OCR returned no readable text.")
+            return text
+
+        return asyncio.run(call_with_free_fallback(
+            plan, operation, lambda failed, replacement, reason: logger.warning("OCR fallback model=%s next=%s reason=%s", failed, replacement, reason),
+            store=_ocr_routing_store, task="ocr", input_tokens=len(b64) + 256,
+        ))
+    except Exception as error:
+        logger.warning("OCR could not complete: %s", safe_service_error(error))
+        return ""
 
 
 def ocr_page_image(page) -> str:

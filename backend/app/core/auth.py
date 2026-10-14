@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Request
 
 from app.core.config import config
 from app.models.database import Workspace
+from app.core.rate_limit import check_request_budget
 
 
 def verify_session(request: Request) -> str | None:
@@ -89,6 +90,7 @@ def verify_session(request: Request) -> str | None:
         or not user_id.startswith("user_")
         or not isinstance(payload.get("exp"), (int, float))
         or not isinstance(payload.get("sid"), str)
+        or (config.clerk_issuer and payload.get("iss") != config.clerk_issuer)
     ):
         raise HTTPException(
             401,
@@ -134,6 +136,8 @@ def authorize_request(
 
     # Save the verified user ID for use during this request.
     request.state.user_id = user_id
+    if user_id:
+        check_request_budget(request.app.state.db, user_id)
 
     # Get the workspace ID from the URL, if the route has one.
     workspace_id = request.path_params.get("workspace_id")

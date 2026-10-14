@@ -37,6 +37,26 @@ class Base(DeclarativeBase):
     pass
 
 
+class RoutingState(Base):
+    __tablename__ = "routing_state"
+    id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class RequestBudget(Base):
+    __tablename__ = "request_budgets"
+    id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    window: Mapped[int]
+    count: Mapped[int]
+
+
+class ConversationModelPreference(Base):
+    __tablename__ = "conversation_model_preferences"
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True)
+    task: Mapped[str] = mapped_column(String(100), primary_key=True)
+    model: Mapped[str] = mapped_column(String(200))
+
+
 # WORKSPACE TABLE
 # A workspace is a container for a user's documents and conversations.
 # Stores each user's workspace details and owner ID.
@@ -193,6 +213,30 @@ class WorkflowRun(Base):
     created_at: Mapped[str] = mapped_column(default=now)
 
 
+class ResearchJob(Base):
+    __tablename__ = "research_jobs"
+    __table_args__ = (UniqueConstraint("owner_id", "request_key"),)
+    id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id", ondelete="CASCADE"), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(200), index=True)
+    request_key: Mapped[str] = mapped_column(String(100))
+    fingerprint: Mapped[str]
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    next_node: Mapped[str] = mapped_column(default="retrieve")
+    replaced_ids: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(default="queued", index=True)
+    lease_owner: Mapped[str | None]
+    lease_until: Mapped[float] = mapped_column(default=0)
+    deadline_at: Mapped[float]
+    cancel_requested: Mapped[bool] = mapped_column(default=False)
+
+
+class ResearchEvent(Base):
+    __tablename__ = "research_events"
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id", ondelete="CASCADE"), primary_key=True)
+    sequence: Mapped[int] = mapped_column(primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+
+
 # APPLICATION SETTINGS TABLE
 # Stores configurable AI application settings in the database.
 class AppSettings(Base):
@@ -220,7 +264,7 @@ class AppSettings(Base):
 
 
 # CREATE THE DATABASE CONNECTION
-def create_database(data_dir):
+def create_database(data_dir, database_url=None):
     """
     Create the data directory, configure SQLite, create tables,
     and return the database engine and session factory.
@@ -236,14 +280,18 @@ def create_database(data_dir):
     #
     # check_same_thread=False allows the connection to be used across
     # different threads, subject to SQLAlchemy's connection management.
-    engine = create_engine(
-        f"sqlite:///{(data_dir / 'aether.db').as_posix()}",
-        connect_args={"check_same_thread": False}
-    )
+    url = database_url or f"sqlite:///{(data_dir / 'aether.db').as_posix()}"
+    if url.startswith(("postgres://", "postgresql://")):
+        url = "postgresql+psycopg://" + url.split("://", 1)[1]
+    is_sqlite = url.startswith("sqlite:")
+    engine = create_engine(url, connect_args={"check_same_thread": False} if is_sqlite else {}, pool_pre_ping=True)
 
     # RUN THIS CODE WHEN A DATABASE CONNECTION IS OPENED.
     @event.listens_for(engine, "connect")
     def enable_foreign_keys(connection, _):
+
+        if not is_sqlite:
+            return
 
         # Enable foreign-key checks in SQLite.
         # This helps enforce relationships between database tables.
@@ -264,7 +312,7 @@ def create_database(data_dir):
         # Read the existing columns in the workspaces table.
         columns = connection.exec_driver_sql(
             "PRAGMA table_info(workspaces)"
-        ).fetchall()
+        ).fetchall() if is_sqlite else []
 
         # If the table already exists but does not have owner_id,
         # add the column so an older database can support ownership.

@@ -25,10 +25,8 @@
 # json converts Python data into JSON and vice versa.
 # Example:
 # {"name": "Rahul"} -> '{"name": "Rahul"}'
-import asyncio
 import json
 import logging
-from time import monotonic
 
 # urlparse breaks a website URL into different parts.
 # Example:
@@ -232,7 +230,7 @@ def create_llm(model: str):
         #
         # Lower values generally aim for
         # more consistent outputs.
-        temperature=1 if model.startswith("gemini-3") else 0,
+        temperature=None if model.startswith("gemini-3") else 0,
         # Stop waiting after the configured timeout.
         timeout=30,
         # Disable automatic retries within this client.
@@ -359,109 +357,11 @@ def message_text(message) -> str:
 # ============================================================
 
 
-async def call_with_free_fallback(plan: dict, operation, notify):
-    """Bound retries per operation; keep only real model/quota failures on cooldown."""
-    from app.services.free_models import mark_model_available, mark_model_unavailable, model_availability
+async def call_with_free_fallback(plan: dict, operation, notify, **routing):
+    """Try every distinct compatible free model before bounded transient retries."""
+    from app.services.routing import execute_fallback
 
-    models = list(plan["models"])
-    active = plan.get("active")
-    if active in models:
-        models = [active] + [model for model in models if model != active]
-    last_error = None
-    attempts = 0
-    budget_expired = False
-    deadline = monotonic() + config.gemini_operation_timeout_seconds
-    failures = plan.setdefault("failure_reasons", {})
-    # Transient failures are local to this call, not shared by concurrent graders
-    # or every later workflow node. Persistent failures expire with their cooldown.
-    for model in list(plan["unavailable"]):
-        if model in failures and model_availability(model)["available"]:
-            plan["unavailable"].remove(model)
-            failures.pop(model, None)
-
-    for index, model in enumerate(models):
-        if budget_expired or attempts >= config.gemini_max_model_attempts or monotonic() >= deadline:
-            break
-        if model in plan["unavailable"]:
-            continue
-        for attempt in range(2):
-            remaining = deadline - monotonic()
-            if attempts >= config.gemini_max_model_attempts or remaining <= 0:
-                break
-            attempts += 1
-            timeout_scope = asyncio.timeout(remaining)
-            try:
-                async with timeout_scope:
-                    result = await operation(model)
-                mark_model_available(model)
-                if model in plan["unavailable"]:
-                    plan["unavailable"].remove(model)
-                failures.pop(model, None)
-                plan["active"] = model
-                return result
-            except Exception as error:
-                budget_expired = timeout_scope.expired()
-                if not is_model_unavailable(error):
-                    raise
-                last_error = error
-                status = service_status(error)
-                reason = safe_service_error(error)
-                alternatives = [item for item in models[index + 1 :] if item not in plan["unavailable"]]
-                timed_out = status in {408, 504} or any(
-                    isinstance(e, (httpx.TimeoutException, TimeoutError)) for e in error_chain(error)
-                )
-                if (
-                    attempt == 0
-                    and retryable_model_error(error)
-                    and attempts < config.gemini_max_model_attempts
-                    and not budget_expired
-                    and deadline - monotonic() > 0.5
-                    and not (timed_out and alternatives)
-                ):
-                    logger.warning(
-                        "Gemini request retry model=%s status=%s error_type=%s reason=%s",
-                        model,
-                        status,
-                        type(error).__name__,
-                        reason,
-                    )
-                    await asyncio.sleep(0.5)
-                    continue
-                # A timeout, failed stream, or oversized response says nothing
-                # about whether this model can serve the next, different request.
-                if status in {404, 429}:
-                    if model not in plan["unavailable"]:
-                        plan["unavailable"].append(model)
-                    failures[model] = reason
-                    mark_model_unavailable(model, 60 if status == 429 else 300)
-                alternatives = [item for item in models[index + 1 :] if item not in plan["unavailable"]]
-                if budget_expired or attempts >= config.gemini_max_model_attempts or monotonic() >= deadline:
-                    alternatives = []
-                logger.warning(
-                    "Gemini request failed model=%s status=%s error_type=%s reason=%s",
-                    model,
-                    status,
-                    type(error).__name__,
-                    reason,
-                )
-                notify(model, alternatives[0] if alternatives else None, reason)
-                break
-
-    reason = (
-        safe_service_error(last_error)
-        if last_error
-        else next(
-            iter(failures.values()), "All candidates are still in cooldown. Wait and refresh the model list."
-        )
-    )
-    limit_note = (
-        " The request's model-attempt or time limit was reached. Please retry shortly."
-        if budget_expired or attempts >= config.gemini_max_model_attempts or monotonic() >= deadline
-        else ""
-    )
-    raise ModelFallbackExhausted(
-        "No eligible Gemini model completed this request. " + reason + limit_note
-    ) from last_error
+    return await execute_fallback(plan, operation, notify, **routing)
 
 
 # ============================================================
@@ -559,6 +459,8 @@ async def structured_call(model: str, schema, instruction: str, data: dict):
 
         # Send the request again without the structured
         # output wrapper.
+        from app.services.routing import reserve_additional_call
+        reserve_additional_call()
         response = await llm.ainvoke(messages)
 
         # Extract the response text and remove

@@ -30,7 +30,10 @@ import {
   Trash2,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { setResearchSession } from "@/lib/research-stream";
+import {
+  restoreResearchConversation,
+  setResearchSession,
+} from "@/lib/research-stream";
 import { useResearch } from "@/stores/research";
 import { Button } from "@/components/ui/button";
 import { Chat } from "@/components/chat";
@@ -47,15 +50,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type {
-  Conversation,
-  Health,
-  Message,
-  Model,
-  View,
-  WorkflowRun,
-  Workspace,
-} from "@/types";
+import type { Conversation, Health, Model, View, Workspace } from "@/types";
 
 const Intelligence = dynamic(
   () =>
@@ -175,10 +170,7 @@ export function ResearchApp({ userId }: { userId: string }) {
         if (useResearch.getState().sessionId !== userId) return;
         update({
           models,
-          selectedModel:
-            useResearch.getState().selectedModel ||
-            models.find((model) => model.available !== false)?.id ||
-            "",
+          selectedModel: useResearch.getState().selectedModel || "auto",
           modelNotice: "",
         });
       } catch (error) {
@@ -188,6 +180,24 @@ export function ResearchApp({ userId }: { userId: string }) {
               ? error.message
               : "Could not load free models.",
         });
+      }
+      if (targetId) {
+        const conversations = await api<Conversation[]>(
+          `/workspaces/${targetId}/conversations`,
+        );
+        const current = useResearch.getState();
+        if (current.sessionId !== userId || current.workspaceId !== targetId)
+          return;
+        update({ conversations });
+        const savedChat =
+          current.conversationId ||
+          localStorage.getItem(`crebry_chat_${userId}_${targetId}`);
+        if (
+          !current.streaming &&
+          savedChat &&
+          conversations.some((chat) => chat.id === savedChat)
+        )
+          await restoreResearchConversation(targetId, savedChat);
       }
     } catch (error) {
       if (useResearch.getState().sessionId !== userId) return;
@@ -210,6 +220,32 @@ export function ResearchApp({ userId }: { userId: string }) {
       update({ intelligenceOpen: false });
     void initialize();
   }, [initialize, update, userId]);
+  useEffect(() => {
+    let refreshing = false;
+    const refresh = () => {
+      const state = useResearch.getState();
+      if (
+        refreshing ||
+        document.visibilityState !== "visible" ||
+        state.streaming ||
+        state.uploading ||
+        state.sessionId !== userId
+      )
+        return;
+      refreshing = true;
+      void initialize().finally(() => {
+        refreshing = false;
+      });
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [initialize, userId]);
   useEffect(() => {
     let active = true;
     if (workspaceId)
@@ -242,28 +278,7 @@ export function ResearchApp({ userId }: { userId: string }) {
   async function openChat(conversation: Conversation) {
     if (busy) return;
     try {
-      const chat = await api<{ messages: Message[] }>(
-        `/workspaces/${workspaceId}/conversations/${conversation.id}`,
-      );
-      const latest = chat.messages.findLast(
-        (message) => message.role === "assistant" && message.run_id,
-      );
-      const run = latest?.run_id
-        ? await api<WorkflowRun>(
-            `/workspaces/${workspaceId}/workflows/${latest.run_id}`,
-          )
-        : null;
-      if (useResearch.getState().sessionId !== userId) return;
-      update({
-        view: "research",
-        conversationId: conversation.id,
-        messages: chat.messages,
-        draft: "",
-        events: run ? [{ type: "start", run_id: run.id }, ...run.events] : [],
-        elapsedMs: run?.duration_ms ?? 0,
-        warnings: [],
-        error: "",
-      });
+      await restoreResearchConversation(workspaceId, conversation.id);
     } catch (error) {
       update({
         error:

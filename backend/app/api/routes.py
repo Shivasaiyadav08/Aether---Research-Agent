@@ -1,15 +1,14 @@
-import asyncio
 import hashlib
 import json
 import logging
 from pathlib import Path
 import tempfile
-from time import perf_counter
+from time import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import defer
 
 from app.core.config import config
@@ -20,6 +19,8 @@ from app.models.database import (
     Conversation,
     Document,
     Message,
+    ResearchJob,
+    RoutingState,
     WorkflowRun,
     Workspace,
     as_dict,
@@ -29,6 +30,7 @@ from app.services import storage
 from app.services.ai import safe_service_error
 from app.services.free_models import get_free_models
 from app.services.documents import extract_text, index_document, upload_document
+from app.services.jobs import write_transaction
 
 router = APIRouter(prefix="/api", dependencies=[Depends(authorize_request)])
 logger = logging.getLogger(__name__)
@@ -50,6 +52,8 @@ class ChatInput(BaseModel):
     conversation_id: str | None = None
     question: str = Field(min_length=1, max_length=4000)
     regenerate: bool = False
+    automatic_fallback: bool = True
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     model: str = Field(default="auto", min_length=1, max_length=200, pattern=r"^[a-zA-Z0-9_./:~\-]+$")
     relevance_threshold: float | None = Field(
         default=None, ge=0, le=1, allow_inf_nan=False,
@@ -83,6 +87,12 @@ def document_summary(document):
 def ensure_workspace_idle(request, workspace_id):
     if workspace_id in request.app.state.active_workspaces.values():
         raise HTTPException(409, "Wait for this workspace's active answer before changing its documents.")
+    with request.app.state.db() as db:
+        active = db.scalar(select(ResearchJob.id).join(WorkflowRun).join(Conversation).where(
+            Conversation.workspace_id == workspace_id, ResearchJob.status.in_(["queued", "running"]),
+        ).limit(1))
+        if active:
+            raise HTTPException(409, "Wait for this workspace's active research before changing its documents.")
 
 
 @router.get("/health")
@@ -330,9 +340,10 @@ def delete_document(workspace_id: str, document_id: str, request: Request):
 
 
 @router.get("/models")
-async def list_models(refresh: bool = False):
+async def list_models(request: Request, refresh: bool = False):
     try:
-        return await get_free_models(refresh=True) if refresh else await get_free_models()
+        models = await get_free_models(refresh=True) if refresh else await get_free_models()
+        return [{**item, **request.app.state.routing.availability(item["id"], "generate")} for item in models]
     except Exception as error:
         raise HTTPException(
             503,
@@ -363,7 +374,10 @@ def get_conversation(workspace_id: str, conversation_id: str, request: Request):
         messages = db.scalars(
             select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at)
         )
-        return {**as_dict(conversation), "messages": [as_dict(message) for message in messages]}
+        latest = db.scalar(select(WorkflowRun).where(WorkflowRun.conversation_id == conversation_id).order_by(WorkflowRun.created_at.desc()).limit(1))
+        return {**as_dict(conversation), "messages": [as_dict(message) for message in messages],
+                "latest_run": {"id": latest.id, "status": latest.status,
+                               "resumable": db.get(ResearchJob, latest.id) is not None} if latest else None}
 
 
 @router.delete("/workspaces/{workspace_id}/conversations/{conversation_id}", status_code=204)
@@ -371,6 +385,10 @@ def delete_conversation(workspace_id: str, conversation_id: str, request: Reques
     with request.app.state.mutation_lock, request.app.state.db() as db:
         if conversation_id in request.app.state.active_workspaces:
             raise HTTPException(409, "This conversation has an active answer.")
+        if db.scalar(select(ResearchJob.id).join(WorkflowRun).where(
+            WorkflowRun.conversation_id == conversation_id, ResearchJob.status.in_(["queued", "running"]),
+        ).limit(1)):
+            raise HTTPException(409, "This conversation has active research.")
         conversation = require_record(db, Conversation, conversation_id)
         if conversation.workspace_id != workspace_id:
             raise HTTPException(404, "Conversation not found in this workspace.")
@@ -409,6 +427,10 @@ def sse(payload: dict) -> str:
 async def resolve_chat_models(data: ChatInput, request: Request):
     with request.app.state.db() as db:
         require_workspace_owner(db, data.workspace_id, request.state.user_id)
+        if data.idempotency_key and db.scalar(select(ResearchJob.id).where(
+            ResearchJob.owner_id == request.state.user_id, ResearchJob.request_key == data.idempotency_key,
+        )):
+            return {"models": ["auto"], "notice": None}
     if not config.gemini_api_key:
         raise HTTPException(503, "Add GEMINI_API_KEY to backend/.env and restart the backend.")
     try:
@@ -424,6 +446,10 @@ async def resolve_chat_models(data: ChatInput, request: Request):
             "All eligible Gemini models are in cooldown after model-access or quota failures. "
             f"Retry in {max(1, retry_after)}s and refresh the model list.",
         )
+    if not data.automatic_fallback and data.model != "auto":
+        if data.model not in {item["id"] for item in available}:
+            raise HTTPException(503, "The selected free-tier model is unavailable. Enable automatic fallback or select another model.")
+        return {"models": [data.model], "notice": None, "catalog": catalog}
     notice = None
     if data.model not in by_id:
         if data.model != "auto" and not data.model.startswith("gemini-"):
@@ -439,18 +465,27 @@ async def resolve_chat_models(data: ChatInput, request: Request):
     models = ([data.model] if data.model in available_ids else []) + [
         item["id"] for item in available if item["id"] != data.model
     ]
-    return {"models": models, "notice": notice}
+    return {"models": models, "notice": notice, "catalog": catalog}
 
 
 @router.post("/chat/stream")
-def chat_stream(data: ChatInput, request: Request, selection: dict = Depends(resolve_chat_models)):
+async def chat_stream(data: ChatInput, request: Request, selection: dict = Depends(resolve_chat_models)):
     # This reservation prevents overlapping requests from corrupting a conversation.
-    with request.app.state.mutation_lock, request.app.state.db() as db:
+    fingerprint = hashlib.sha256(json.dumps(data.model_dump(exclude={"idempotency_key"}), sort_keys=True).encode()).hexdigest()
+    with request.app.state.mutation_lock, write_transaction(request.app.state.db) as db:
+        db.execute(select(RoutingState.id).where(RoutingState.id == config.gemini_project_id).with_for_update())
         require_record(db, Workspace, data.workspace_id)
+        if data.idempotency_key:
+            previous = db.scalar(select(ResearchJob).where(ResearchJob.owner_id == request.state.user_id, ResearchJob.request_key == data.idempotency_key))
+            if previous:
+                if previous.fingerprint != fingerprint:
+                    raise HTTPException(409, "This request key was already used for different input.")
+                return StreamingResponse(request.app.state.jobs.subscribe(previous.id), media_type="text/event-stream", headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
         if data.conversation_id:
             conversation = require_record(db, Conversation, data.conversation_id)
             if conversation.workspace_id != data.workspace_id:
                 raise HTTPException(404, "Conversation not found in this workspace.")
+            db.execute(select(Conversation.id).where(Conversation.id == conversation.id).with_for_update())
         else:
             if data.regenerate:
                 raise HTTPException(422, "Regeneration requires an existing conversation.")
@@ -458,6 +493,11 @@ def chat_stream(data: ChatInput, request: Request, selection: dict = Depends(res
             db.add(conversation)
             db.flush()
         if conversation.id in request.app.state.active_workspaces:
+            raise HTTPException(409, "An answer is already running in this conversation.")
+        active_job = db.scalar(select(ResearchJob.id).join(WorkflowRun).where(
+            WorkflowRun.conversation_id == conversation.id, ResearchJob.status.in_(["queued", "running"]),
+        ).limit(1))
+        if active_job:
             raise HTTPException(409, "An answer is already running in this conversation.")
         rows = list(
             db.scalars(
@@ -489,114 +529,66 @@ def chat_stream(data: ChatInput, request: Request, selection: dict = Depends(res
         settings["validate_answer"] = True
         run = WorkflowRun(id=new_id(), conversation_id=conversation.id)
         db.add(run)
-        db.commit()
+        db.flush()
         conversation_id, run_id = conversation.id, run.id
-        request.app.state.active_workspaces[conversation_id] = data.workspace_id
-
-    async def events():
-        started = perf_counter()
-        trace = []
-        status, error_text = "cancelled", None
-        iterator = request.app.state.graph.astream(
-            {
-                "question": data.question,
-                "workspace_id": data.workspace_id,
-                "history": history,
-                "settings": settings,
-                "sources": [],
-                "warnings": [],
-                "attempts": 0,
-                "model_plan": {
-                    "models": selection["models"],
-                    "unavailable": [],
-                    "notice": selection["notice"],
-                },
+        snapshot = {
+            "question": data.question, "workspace_id": data.workspace_id,
+            "history": history, "settings": settings, "sources": [], "warnings": [], "attempts": 0,
+            "model_plan": {
+                "models": selection["models"], "unavailable": [], "notice": selection["notice"],
+                "catalog": selection.get("catalog"), "conversation_id": conversation_id,
+                "selected": data.model, "automatic": data.automatic_fallback,
+                "deadline_at": time() + config.research_timeout_seconds,
             },
-            stream_mode="custom",
-            config={"recursion_limit": 30},
-            version="v2",
-        ).__aiter__()
-        pending = None
-        try:
-            yield sse({"type": "start", "conversation_id": conversation_id, "run_id": run_id})
-            while True:
-                if pending is None:
-                    pending = asyncio.create_task(anext(iterator))
-                completed, _ = await asyncio.wait({pending}, timeout=15)
-                if not completed:
-                    yield ": heartbeat\n\n"
-                    continue
-                try:
-                    part = pending.result()
-                except StopAsyncIteration:
-                    break
-                pending = None
-                payload = part["data"]
-                payload["elapsed_ms"] = round((perf_counter() - started) * 1000)
-                if payload["type"] != "token":
-                    trace.append(payload)
-                    with request.app.state.db() as db:
-                        record = db.get(WorkflowRun, run_id)
-                        record.events = list(trace)
-                        db.commit()
-                if payload["type"] == "final":
-                    with request.app.state.db() as db:
-                        if replaced_ids:
-                            db.execute(delete(Message).where(Message.id.in_(replaced_ids)))
-                        message = Message(
-                            conversation_id=conversation_id,
-                            role="assistant",
-                            content=payload["answer"],
-                            sources=payload["sources"],
-                            run_id=run_id,
-                        )
-                        db.add(message)
-                        db.commit()
-                        payload["message"] = as_dict(message)
-                    status = "completed" if payload["valid"] else "validation_failed"
-                yield sse(payload)
-            if status == "cancelled":
-                raise RuntimeError("Workflow ended without a final answer.")
-            yield sse(
-                {
-                    "type": "done",
-                    "run_id": run_id,
-                    "status": status,
-                    "duration_ms": round((perf_counter() - started) * 1000),
-                }
-            )
-        except asyncio.CancelledError:
-            error_text = "Request disconnected or stopped. The incomplete answer was not saved."
-            raise
-        except Exception as error:
-            status = "failed"
-            error_text = safe_service_error(error)
-            logger.error("Research run failed run_id=%s error_type=%s reason=%s", run_id, type(error).__name__, error_text)
-            trace.append({"type": "error", "message": error_text})
-            yield sse({"type": "error", "message": error_text, "run_id": run_id})
-        finally:
-            if pending and not pending.done():
-                pending.cancel()
-                try:
-                    await pending
-                except (asyncio.CancelledError, StopAsyncIteration):
-                    pass
-            await iterator.aclose()
-            with request.app.state.mutation_lock, request.app.state.db() as db:
-                record = db.get(WorkflowRun, run_id)
-                if record:
-                    record.status = status
-                    record.error = error_text
-                    record.events = list(trace)
-                    record.duration_ms = round((perf_counter() - started) * 1000)
-                    db.commit()
-                request.app.state.active_workspaces.pop(conversation_id, None)
+        }
+        db.add(ResearchJob(
+            id=run_id, owner_id=request.state.user_id, request_key=data.idempotency_key or new_id(),
+            fingerprint=fingerprint, snapshot=snapshot, replaced_ids=replaced_ids,
+            deadline_at=time() + config.research_timeout_seconds,
+        ))
 
     return StreamingResponse(
-        events(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-        },
+        request.app.state.jobs.subscribe(run_id), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/workspaces/{workspace_id}/workflows/{run_id}/events")
+async def resume_events(workspace_id: str, run_id: str, request: Request, after: int = 0):
+    get_run(workspace_id, run_id, request)
+    with request.app.state.db() as db:
+        if db.get(ResearchJob, run_id) is None:
+            raise HTTPException(409, "This legacy run has no resumable checkpoint.")
+    return StreamingResponse(request.app.state.jobs.subscribe(run_id, max(0, after)), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
+
+
+@router.post("/workspaces/{workspace_id}/workflows/{run_id}/cancel")
+def cancel_job(workspace_id: str, run_id: str, request: Request):
+    get_run(workspace_id, run_id, request)
+    with write_transaction(request.app.state.db) as db:
+        job = require_record(db, ResearchJob, run_id)
+        job.cancel_requested = True
+        if job.status == "queued":
+            job.status = "cancelled"
+            db.get(WorkflowRun, run_id).status = "cancelled"
+    return {"status": "cancellation_requested"}
+
+
+@router.post("/workspaces/{workspace_id}/workflows/{run_id}/retry")
+def retry_job(workspace_id: str, run_id: str, request: Request):
+    get_run(workspace_id, run_id, request)
+    with write_transaction(request.app.state.db) as db:
+        job = require_record(db, ResearchJob, run_id)
+        if job.status not in {"failed", "cancelled", "interrupted"}:
+            raise HTTPException(409, "Only interrupted research can be retried.")
+        run = db.get(WorkflowRun, run_id)
+        if db.scalar(select(ResearchJob.id).join(WorkflowRun).where(
+            WorkflowRun.conversation_id == run.conversation_id,
+            ResearchJob.id != run_id, ResearchJob.status.in_(["queued", "running"]),
+        ).limit(1)):
+            raise HTTPException(409, "Another answer is already running in this conversation.")
+        job.status, job.cancel_requested, job.lease_owner, job.lease_until = "queued", False, None, 0
+        job.deadline_at = time() + config.research_timeout_seconds
+        run.status, run.error = "running", None
+    return {"run_id": run_id, "status": "queued"}
