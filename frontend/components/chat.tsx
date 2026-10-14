@@ -28,6 +28,7 @@ import { FreeModelPicker } from "@/components/free-model-picker";
 import { RelevancePicker } from "@/components/relevance-picker";
 import { BrandMark } from "@/components/brand";
 import { recoverResearch } from "@/lib/research-stream";
+import { withoutDocumentIntro } from "@/lib/answer-format";
 
 export function Answer({
   content,
@@ -37,7 +38,7 @@ export function Answer({
   sources: Source[];
 }) {
   const update = useResearch((state) => state.update);
-  const linked = content.replace(
+  const linked = withoutDocumentIntro(content).replace(
     /\[([DW]\d+(?:\s*,\s*[DW]\d+)*)\]/g,
     (_match, group: string) =>
       group
@@ -123,6 +124,7 @@ export function Chat() {
     draft,
     correctingDraft,
     streaming,
+    actualModel,
     health,
     error,
     warnings,
@@ -170,7 +172,7 @@ export function Chat() {
   }
   async function copy(content: string, id: string) {
     try {
-      await navigator.clipboard.writeText(content);
+      await navigator.clipboard.writeText(withoutDocumentIntro(content));
       setCopied(id);
       setTimeout(() => setCopied(""), 2000);
     } catch {
@@ -481,7 +483,7 @@ export function Chat() {
                 <span>Sources</span>
               </Button>
               <span className="composer-divider" />
-              <FreeModelPicker />
+              <FreeModelPicker showActualModel={false} />
               <RelevancePicker />
             </div>
             {streaming ? (
@@ -508,6 +510,15 @@ export function Chat() {
               </Button>
             )}
           </div>
+          {actualModel && (
+            <span
+              className="composer-model-status"
+              role="status"
+              title={`Actual model: ${actualModel}`}
+            >
+              Using {actualModel}
+            </span>
+          )}
         </form>
         <div className="composer-hint">
           <ShieldHint />

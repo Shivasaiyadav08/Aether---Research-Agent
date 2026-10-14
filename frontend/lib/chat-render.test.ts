@@ -82,7 +82,8 @@ it("shows missing web search visibly and preserves web citation rendering", () =
   (context.state.messages as object[]).push({
     id: "answer",
     role: "assistant",
-    content: "Web evidence supports this claim [W1, W2].",
+    content:
+      "Based on the provided documents, web evidence supports this claim [W1, W2].",
     sources: [
       {
         id: "W1",
@@ -105,6 +106,10 @@ it("shows missing web search visibly and preserves web citation rendering", () =
   expect(html).toContain('aria-label="View source W1"');
   expect(html).toContain('aria-label="View source W2"');
   expect(html).toContain("Web sources");
+  expect(html).toContain("Web evidence supports this claim");
+  expect(html).not.toContain("Based on the provided documents");
+  expect(html).toContain('class="composer-model-status"');
+  expect(html).not.toContain('class="actual-model-status"');
   expect(html).not.toContain("Uploaded documents");
   expect(html.match(/value="auto"/g)).toHaveLength(1);
   expect(html).toContain("model-picker-controls");

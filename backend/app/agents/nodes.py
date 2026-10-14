@@ -48,6 +48,12 @@ def cited_ids(answer: str) -> set[str]:
     return {item for group in groups for item in re.findall(r"[DW]\d+", group)}
 
 
+def without_document_intro(answer: str) -> str:
+    """Remove the stock preamble without changing claims or evidence IDs."""
+    clean = re.sub(r"^\s*(?:\*\*)?Based on (?:the )?(?:provided|uploaded|supplied) documents(?:\*\*)?\s*[,:\u2014\u2013-]\s*", "", answer, flags=re.I)
+    return clean[:1].upper() + clean[1:] if clean != answer else answer
+
+
 def citation_errors(answer: str, sources: list[dict]) -> list[str]:
     """Check exact citation membership. Semantic support is checked separately."""
     used = cited_ids(answer)
@@ -347,6 +353,7 @@ def make_nodes(vectors, routing_store=None):
                 )
             else:
                 answer = await stream_model(state["settings"]["model"])
+            answer = without_document_intro(answer)
             if not answer.strip():
                 raise ValueError(
                     "The selected model returned an empty answer. Select another model and retry."

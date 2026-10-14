@@ -369,7 +369,15 @@
 }
 .composer-footer {
   gap: 10px;
-  align-items: flex-end;
+  align-items: center;
+}
+.composer-model-status {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .composer-footer > .button {
   flex-shrink: 0;
@@ -477,6 +485,9 @@
   bottom: 8px;
 }
 @container (max-width: 650px) {
+  .composer-footer {
+    align-items: flex-end;
+  }
   .composer-tools {
     grid-template-columns: minmax(0, 1fr) auto;
     row-gap: 8px;

@@ -6,7 +6,11 @@ import { useResearch } from "@/stores/research";
 import type { Model } from "@/types";
 import { modelAllowed } from "@/lib/model-policy";
 
-export function FreeModelPicker() {
+export function FreeModelPicker({
+  showActualModel = true,
+}: {
+  showActualModel?: boolean;
+}) {
   const {
     models,
     selectedModel,
@@ -138,7 +142,7 @@ export function FreeModelPicker() {
         />
         <span>Auto fallback</span>
       </label>
-      {actualModel && actualModel !== selectedModel && (
+      {showActualModel && actualModel && actualModel !== selectedModel && (
         <span
           className="actual-model-status"
           role="status"

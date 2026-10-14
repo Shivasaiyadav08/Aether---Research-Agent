@@ -285,12 +285,13 @@ async def test_grouped_web_citations_publish_all_sources_without_regenerating(ve
             payload = json.loads(messages[-1].content)
             assert payload["evidence_origin"] == "web sources"
             assert "W IDs identify web pages, not uploaded documents" in messages[0].content
-            yield AIMessageChunk(content="Astronomy studies stars [W1, W2].")
+            yield AIMessageChunk(content="Based on the provided documents, astronomy studies stars [W1, W2].")
 
     monkeypatch.setattr("app.agents.nodes.search_web", search)
     monkeypatch.setattr("app.agents.nodes.create_llm", lambda _: Model())
     events = await run_graph(vectors)
     assert events[-1]["valid"]
+    assert events[-1]["answer"] == "Astronomy studies stars [W1, W2]."
     assert {source["id"] for source in events[-1]["sources"]} == {"W1", "W2"}
     assert len([event for event in events if event["type"] == "node_start" and event["node"] == "generate"]) == 1
 
